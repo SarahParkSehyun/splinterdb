@@ -160,7 +160,7 @@ typedef struct {
 } buffer_handle;
 
 // iohandle for laio
-typedef struct laio_handle platform_io_handle;
+typedef struct uring_handle platform_io_handle;
 
 typedef void *platform_module_id;
 typedef void *platform_heap_id;
@@ -176,7 +176,7 @@ typedef struct {
 #define UNUSED_PARAM(_parm) _parm __attribute__((__unused__))
 #define UNUSED_TYPE(_parm)  UNUSED_PARAM(_parm)
 
-#define ROUNDUP(x, y)   (((x) + (y)-1) / (y) * (y))
+#define ROUNDUP(x, y)   (((x) + (y) - 1) / (y) * (y))
 #define ROUNDDOWN(x, y) ((x) / (y) * (y))
 
 typedef struct platform_condvar {

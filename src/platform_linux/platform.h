@@ -95,10 +95,10 @@ typedef int32 bool32;
 #define TiB (GiB * 1024)
 
 // Convert 'x' in unit-specifiers to bytes
-#define KiB_TO_B(x) ((x)*KiB)
-#define MiB_TO_B(x) ((x)*MiB)
-#define GiB_TO_B(x) ((x)*GiB)
-#define TiB_TO_B(x) ((x)*TiB)
+#define KiB_TO_B(x) ((x) * KiB)
+#define MiB_TO_B(x) ((x) * MiB)
+#define GiB_TO_B(x) ((x) * GiB)
+#define TiB_TO_B(x) ((x) * TiB)
 
 // Convert 'x' in bytes to 'int'-value with unit-specifiers
 #define B_TO_KiB(x) ((x) / KiB)
@@ -118,13 +118,13 @@ typedef int32 bool32;
 #define BILLION  (THOUSAND * MILLION)
 
 #define USEC_TO_SEC(x)  ((x) / MILLION)
-#define USEC_TO_NSEC(x) ((x)*THOUSAND)
+#define USEC_TO_NSEC(x) ((x) * THOUSAND)
 #define NSEC_TO_SEC(x)  ((x) / BILLION)
 #define NSEC_TO_MSEC(x) ((x) / MILLION)
 #define NSEC_TO_USEC(x) ((x) / THOUSAND)
-#define SEC_TO_MSEC(x)  ((x)*THOUSAND)
-#define SEC_TO_USEC(x)  ((x)*MILLION)
-#define SEC_TO_NSEC(x)  ((x)*BILLION)
+#define SEC_TO_MSEC(x)  ((x) * THOUSAND)
+#define SEC_TO_USEC(x)  ((x) * MILLION)
+#define SEC_TO_NSEC(x)  ((x) * BILLION)
 
 #define MAX_STRING_LENGTH 256
 
@@ -149,7 +149,7 @@ typedef int (*platform_sort_cmpfn)(const void *a, const void *b, void *arg);
  */
 #ifndef container_of
 #   define container_of(ptr, type, memb)                                       \
-      ((type *)((char *)(ptr)-offsetof(type, memb)))
+      ((type *)((char *)(ptr) - offsetof(type, memb)))
 #endif
 
 /*
@@ -214,8 +214,16 @@ extern platform_log_handle *Platform_error_log_handle;
 #   define debug_code(...)
 #endif // SPLINTER_DEBUG
 
-#define platform_assert_status_ok(_s) platform_assert(SUCCESS(_s));
-
+#define platform_assert_status_ok(_s)                                          \
+   do {                                                                        \
+      if (!SUCCESS(_s)) {                                                      \
+         platform_error_log("ASSERT FAIL: status.r = %ld at %s:%d\n",          \
+                            (long)((_s).r),                                    \
+                            __FILE__,                                          \
+                            __LINE__);                                         \
+         platform_assert(FALSE);                                               \
+      }                                                                        \
+   } while (0)
 // hash functions
 typedef uint32 (*hash_fn)(const void *input, size_t length, unsigned int seed);
 
@@ -562,7 +570,7 @@ platform_sort_slow(void               *base,
                    void               *cmparg,
                    void               *temp);
 
-#define IS_POWER_OF_2(n) ((n) > 0 && ((n) & ((n)-1)) == 0)
+#define IS_POWER_OF_2(n) ((n) > 0 && ((n) & ((n) - 1)) == 0)
 
 #ifndef MAX
 #   define MAX(a, b) ((a) > (b) ? (a) : (b))

@@ -174,7 +174,6 @@ splinterdb_init_config(const splinterdb_config *kvs_cfg, // IN
                   cfg.io_perms,
                   cfg.io_async_queue_depth,
                   cfg.filename);
-
    // Validate IO-configuration parameters
    rc = laio_config_valid(&kvs->io_cfg);
    if (!SUCCESS(rc)) {
@@ -253,6 +252,13 @@ splinterdb_create_or_open(const splinterdb_config *kvs_cfg,      // IN
 
    bool             we_created_heap  = FALSE;
    platform_heap_id use_this_heap_id = kvs_cfg->heap_id;
+
+   platform_default_log("==> splinterdb_create_or_open: ENTER\n");
+   platform_default_log("   kvs_cfg = %p\n", kvs_cfg);
+   platform_default_log("   kvs_out = %p\n", kvs_out);
+   platform_default_log("   open_existing = %d\n", open_existing);
+
+   platform_default_log("   kvs_cfg->disk_size = %lu\n", kvs_cfg->disk_size);
 
    // Allocate a shared segment if so requested. For now, we hard-code
    // the required size big enough to run most tests. Eventually this

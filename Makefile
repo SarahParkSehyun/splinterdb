@@ -72,7 +72,7 @@ INCLUDE = -I $(INCDIR) -I $(SRCDIR) -I $(SRCDIR)/platform_$(PLATFORM) -I $(TESTS
 
 # use += here, so that extra flags can be provided via the environment
 
-CFLAGS += -D_GNU_SOURCE -ggdb -Wall -pthread -Wfatal-errors -Werror -Wvla
+CFLAGS += -D_GNU_SOURCE -ggdb -Wall -pthread -Wfatal-errors -Werror -Wvla -g -gdwarf-4 -fno-omit-frame-pointer
 CFLAGS += -DXXH_STATIC_LINKING_ONLY -fPIC
 CFLAGS += -DSPLINTERDB_PLATFORM_DIR=$(PLATFORM_DIR)
 
@@ -87,9 +87,10 @@ ifeq ($(cpu_arch),x86_64)
   CFLAGS += -march=native
 endif
 
-LDFLAGS += -ggdb -pthread
+LDFLAGS += -ggdb -pthread -Wl,--no-as-needed -ldl -Wl,--rpath=/usr/local/lib/glibc-testing/lib -Wl,--dynamic-linker=/trusted/local/lib/glibc-testing/lib/ld-linux.so.2
 
-LIBS      = -lm -lpthread -laio -lxxhash
+
+LIBS      = -lm -lpthread -lxxhash -luring
 DEPFLAGS  = -MMD -MP
 
 #*************************************************************#

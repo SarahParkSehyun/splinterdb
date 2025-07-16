@@ -11,7 +11,7 @@
 
 #include "io.h"
 #include <libaio.h>
-
+#include <liburing.h>
 /*
  * SplinterDB can be configured with different page-sizes, given by these
  * min & max values.
@@ -24,20 +24,28 @@
 #define LAIO_DEFAULT_EXTENT_SIZE                                               \
    (LAIO_DEFAULT_PAGES_PER_EXTENT * LAIO_DEFAULT_PAGE_SIZE)
 
+
+typedef struct io_uring_context {
+   struct io_uring  ring;
+   platform_heap_id heap_id;
+} io_uring_context_t;
+
 typedef struct io_process_context {
-   pid_t            pid;
-   uint64           thread_count;
-   bool32           shutting_down;
-   uint64           io_count; // inflight ios
-   io_context_t     ctx;
-   pthread_t        io_cleaner;
-   async_wait_queue submit_waiters;
+   pid_t              pid;
+   uint64             thread_count;
+   bool32             shutting_down;
+   uint64             io_count; // inflight ios
+   io_context_t       ctx;
+   pthread_t          io_cleaner;
+   async_wait_queue   submit_waiters;
+   io_uring_context_t uring_ctx;
 } io_process_context;
+
 
 /*
  * Async IO context structure handle:
  */
-typedef struct laio_handle {
+typedef struct uring_handle {
    io_handle          super;
    io_config         *cfg;
    int                ctx_lock;
@@ -45,7 +53,7 @@ typedef struct laio_handle {
    uint64             ctx_idx[MAX_THREADS];
    platform_heap_id   heap_id;
    int                fd; // File descriptor to Splinter device/file.
-} laio_handle;
+} uring_handle;
 
 platform_status
 laio_config_valid(io_config *cfg);

@@ -1649,6 +1649,8 @@ clockcache_get_from_disk(clockcache   *cc,   // IN
    }
 
    platform_status status = io_read(cc->io, entry->page.data, page_size, addr);
+   // platform_error_log("clockcache_get_from_disk: EIO at addr = %lu\n", addr);
+
    platform_assert_status_ok(status);
 
    if (cc->cfg->use_stats) {
