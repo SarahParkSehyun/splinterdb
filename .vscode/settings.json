@@ -1,5 +1,10 @@
 {
   "files.associations": {
-    "laio.h": "c"
+    "laio.h": "c",
+    "fstream": "c",
+    "istream": "c",
+    "ostream": "c",
+    "fcntl.h": "c",
+    "string_view": "c"
   }
 }
