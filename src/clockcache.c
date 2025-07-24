@@ -1285,6 +1285,7 @@ clockcache_get_free_page(clockcache *cc,
 void
 clockcache_flush(clockcache *cc)
 {
+   platform_default_log("clockcache_flush\n");
    // make sure all aio is complete first
    io_wait_all(cc->io);
 

@@ -138,11 +138,12 @@ help::
 #   - Use gcc to build in Asan mode to run unit-tests.
 #   - Tests will run slow in address sanitizer builds.
 ifndef BUILD_ASAN
-   BUILD_ASAN=0
+   BUILD_ASAN=1
 endif
 
 ifeq "$(BUILD_ASAN)" "1"
    CFLAGS  += -fsanitize=address
+   LDFLAGS += -static-libasan
    LDFLAGS += -fsanitize=address
    BUILD_DIR:=$(BUILD_DIR)-asan
 else ifneq "$(BUILD_ASAN)" "0"
