@@ -33,7 +33,7 @@
 #   endif
 #endif
 #include <string.h>
-
+// pthread_mutex_t io_uring_mutex = PTHREAD_MUTEX_INITIALIZER;
 /*
  * Context management
  */
@@ -89,160 +89,55 @@ laio_cleanup_one(io_process_context *pctx, int mincnt)
 }
 */
 
-typedef struct uring_async_state {
-   io_async_state      super;
-   async_state         __async_state_stack[1];
-   uring_handle       *io;
-   io_async_cmd        cmd;
-   uint64              addr;
-   async_callback_fn   callback;
-   void               *callback_arg;
-   async_waiter        waiter_node;
-   io_process_context *pctx;
-   platform_status     rc;
-   uint64              ctx_idx;
-   int                 status;
-   uint64              iovlen;
-   struct iovec       *iovs;
-   struct iovec        iov[];
-} uring_async_state;
 
-/*
 static int
 uring_cleanup_one(io_process_context *pctx, int mincnt)
 {
    struct io_uring_cqe *cqe;
-   int                  status;
+   int                  ret;
 
+   // 1) mincnt > 0 이면 블로킹 wait, 아니면 논블로킹 peek
    if (mincnt > 0) {
-      status = io_uring_wait_cqe(&pctx->uring_ctx.ring, &cqe);
-      if (status < 0) {
+      ret = io_uring_wait_cqe(&pctx->uring_ctx.ring, &cqe);
+      if (ret < 0) {
          if (!pctx->shutting_down) {
-            platform_error_log("%s(): OS-pid=%d, "
-                               "io_count=%lu, "
-                               "wait_cqe failed with errno=%d: %s\n",
-                               __func__,
-                               platform_getpid(),
-                               pctx->io_count,
-                               -status,
-                               strerror(-status));
+            platform_error_log(
+               "%s(): OS-pid=%d, io_count=%lu, wait_cqe errno=%d: %s\n",
+               __func__,
+               platform_getpid(),
+               pctx->io_count,
+               -ret,
+               strerror(-ret));
          }
          return 0;
       }
    } else {
-      status = io_uring_peek_cqe(&pctx->uring_ctx.ring, &cqe);
-      if (status < 0 || cqe == NULL) {
+      ret = io_uring_peek_cqe(&pctx->uring_ctx.ring, &cqe);
+      if (ret <= 0) {
          return 0;
       }
    }
-   uint64 decremented_count = __sync_fetch_and_sub(&pctx->io_count, 1);
-   platform_default_log("[uring_cleanup_one] io_count-- → %lu\n",
-                        decremented_count - 1);
 
-   uring_async_state *ios = (uring_async_state *)io_uring_cqe_get_data(cqe);
-
-   if (ios) {
-      ios->status = cqe->res;
-      platform_default_log(
-         "[uring_cleanup_one] CQE done: ios = %p, status = %d\n",
-         ios,
-         cqe->res);
-
-      if (ios->callback) {
-
-         ios->callback(ios->callback_arg);
-      }
-   } else {
-      platform_error_log("%s(): NULL user_data in CQE\n", __func__);
+   // 2) NOP 이벤트 처리: user_data가 0이면 I/O 요청이 아니므로
+   //    io_count나 waiters를 건드리지 않고 CQE만 해제
+   if (cqe->user_data == 0) {
+      io_uring_cqe_seen(&pctx->uring_ctx.ring, cqe);
+      return 1;
    }
 
+   // 3) 실제 I/O 요청 이벤트: outstanding count 감소
+   __sync_fetch_and_sub(&pctx->io_count, 1);
+
+   // 4) callback 호출
+   struct iocb  *req      = (struct iocb *)cqe->user_data;
+   io_callback_t callback = (io_callback_t)req->data;
+   if (callback) {
+      callback(pctx->ctx, req, cqe->res, 0);
+   }
+
+   // 5) CQE 해제 + 제출 대기 스레드 깨우기
    io_uring_cqe_seen(&pctx->uring_ctx.ring, cqe);
    async_wait_queue_release_one(&pctx->submit_waiters);
-
-   return 1;
-}
-*/
-static int
-uring_cleanup_one(io_process_context *pctx, int mincnt)
-{
-   platform_default_log("[uring_cleanup_one] enter: io_count=%lu, mincnt=%d\n",
-                        pctx->io_count,
-                        mincnt);
-
-   struct io_uring_cqe *cqe = NULL;
-   int                  status;
-
-   if (mincnt > 0) {
-      platform_default_log("[uring_cleanup_one] before io_uring_wait_cqe()\n");
-      status = io_uring_wait_cqe(&pctx->uring_ctx.ring, &cqe);
-      platform_default_log(
-         "[uring_cleanup_one] after io_uring_wait_cqe(): status=%d, cqe=%p\n",
-         status,
-         (void *)cqe);
-
-      if (status < 0) {
-         if (!pctx->shutting_down) {
-            platform_error_log("%s(): OS-pid=%d, io_count=%lu, "
-                               "wait_cqe failed with errno=%d: %s\n",
-                               __func__,
-                               platform_getpid(),
-                               pctx->io_count,
-                               -status,
-                               strerror(-status));
-         }
-         platform_default_log(
-            "[uring_cleanup_one] exit returning 0 (wait_cqe failure)\n");
-         return 0;
-      }
-   } else {
-      platform_default_log("[uring_cleanup_one] before io_uring_peek_cqe()\n");
-      status = io_uring_peek_cqe(&pctx->uring_ctx.ring, &cqe);
-      platform_default_log(
-         "[uring_cleanup_one] after io_uring_peek_cqe(): status=%d, cqe=%p\n",
-         status,
-         (void *)cqe);
-
-      if (status < 0 || cqe == NULL) {
-         platform_default_log(
-            "[uring_cleanup_one] exit returning 0 (no cqe)\n");
-         return 0;
-      }
-   }
-
-   uint64 decremented_count = __sync_fetch_and_sub(&pctx->io_count, 1);
-   platform_default_log("[uring_cleanup_one] before decrement: io_count=%lu\n",
-                        decremented_count);
-   platform_default_log(
-      "[uring_cleanup_one] after decrement: io_count-- → %lu\n",
-      decremented_count - 1);
-
-   uring_async_state *ios = (uring_async_state *)io_uring_cqe_get_data(cqe);
-   platform_default_log("[uring_cleanup_one] user_data pointer: %p\n", ios);
-
-   if (ios) {
-      ios->status = cqe->res;
-      platform_default_log(
-         "[uring_cleanup_one] CQE done: ios = %p, status = %d\n",
-         ios,
-         cqe->res);
-
-      if (ios->callback) {
-         platform_default_log(
-            "[uring_cleanup_one] invoking callback for ios = %p\n", ios);
-         ios->callback(ios->callback_arg);
-         platform_default_log(
-            "[uring_cleanup_one] callback complete for ios = %p\n", ios);
-      } else {
-         platform_error_log("[uring_cleanup_one] ios->callback is NULL\n");
-      }
-   } else {
-      platform_error_log("%s(): NULL user_data in CQE\n", __func__);
-   }
-
-   platform_default_log("[uring_cleanup_one] before cqe_seen and release\n");
-   io_uring_cqe_seen(&pctx->uring_ctx.ring, cqe);
-   async_wait_queue_release_one(&pctx->submit_waiters);
-   platform_default_log("[uring_cleanup_one] exit returning 1\n");
 
    return 1;
 }
@@ -373,6 +268,7 @@ get_ctx_idx(uring_handle *io)
 }
 */
 
+/*
 static uint64
 get_ctx_idx(uring_handle *io)
 {
@@ -426,61 +322,60 @@ get_ctx_idx(uring_handle *io)
    unlock_ctx(io);
    return INVALID_TID;
 }
+*/
 
 
-// static uint64
-// get_ctx_idx(uring_handle *io)
-// {
-//    const pid_t pid = platform_getpid();
+static uint64
+get_ctx_idx(uring_handle *io)
+{
+   const pid_t pid = platform_getpid();
 
-//    lock_ctx(io);
+   lock_ctx(io);
 
-//    // 1) 이미 등록된 컨텍스트가 있는지 검색
-//    for (int i = 0; i < MAX_THREADS; i++) {
-//       if (io->ctx[i].pid == pid) {
-//          io->ctx[i].thread_count++;
-//          unlock_ctx(io);
-//          return i;
-//       }
-//    }
+   // 1) 이미 등록된 컨텍스트가 있는지 검색
+   for (int i = 0; i < MAX_THREADS; i++) {
+      if (io->ctx[i].pid == pid) {
+         io->ctx[i].thread_count++;
+         unlock_ctx(io);
+         return i;
+      }
+   }
 
-//    // 2) 빈 슬롯 발견 시 io_uring 초기화 후 클리너 스레드 생성
-//    for (int i = 0; i < MAX_THREADS; i++) {
-//       if (io->ctx[i].pid == 0) {
-//          // io_uring 큐 초기화
-//          int status = io_uring_queue_init(io->cfg->kernel_queue_size,
-//                                           &io->ctx[i].uring_ctx.ring,
-//                                           0 /* flags */);
-//          if (status < 0) {
-//             platform_error_log(
-//                "io_uring_queue_init() failed for PID=%d, ring=%p: %s\n",
-//                pid,
-//                &io->ctx[i].uring_ctx.ring,
-//                strerror(-status));
-//             unlock_ctx(io);
-//             return INVALID_TID;
-//          }
+   // 2) 빈 슬롯 발견 시 io_uring 초기화 후 클리너 스레드 생성
+   for (int i = 0; i < MAX_THREADS; i++) {
+      if (io->ctx[i].pid == 0) {
+         // io_uring 큐 초기화
+         int status = io_uring_queue_init(io->cfg->kernel_queue_size,
+                                          &io->ctx[i].uring_ctx.ring,
+                                          0 /* flags */);
+         if (status < 0) {
+            platform_error_log(
+               "io_uring_queue_init() failed for PID=%d, ring=%p: %s\n",
+               pid,
+               &io->ctx[i].uring_ctx.ring,
+               strerror(-status));
+            unlock_ctx(io);
+            return INVALID_TID;
+         }
 
-//          // 컨텍스트 메타데이터 초기화
-//          io->ctx[i].pid           = pid;
-//          io->ctx[i].thread_count  = 1;
-//          io->ctx[i].shutting_down = false;
-//          io->ctx[i].io_count      = 0;
-//          async_wait_queue_init(&io->ctx[i].submit_waiters);
+         io->ctx[i].pid           = pid;
+         io->ctx[i].thread_count  = 1;
+         io->ctx[i].shutting_down = 0;
+         io->ctx[i].io_count      = 0;
+         // io->ctx[i].uring_ctx.heap_id = io->heap_id;
+         async_wait_queue_init(&io->ctx[i].submit_waiters);
 
-//          // 클리너 스레드(uring_cleaner) 기동
-//          pthread_create(
-//             &io->ctx[i].io_cleaner, NULL, uring_cleaner, &io->ctx[i]);
+         // pthread_create(
+         //    &io->ctx[i].io_cleaner, NULL, uring_cleaner, &io->ctx[i]);
 
-//          unlock_ctx(io);
-//          return i;
-//       }
-//    }
+         unlock_ctx(io);
+         return i;
+      }
+   }
 
-//    // 빈 슬롯이 없으면 실패
-//    unlock_ctx(io);
-//    return INVALID_TID;
-// }
+   unlock_ctx(io);
+   return INVALID_TID;
+}
 
 /*
  * laio_read() - Basically a wrapper around pread().
@@ -506,138 +401,58 @@ laio_read(io_handle *ioh, void *buf, uint64 bytes, uint64 addr)
 }
 */
 
+
+/*
+
 static platform_status
 uring_read(io_handle *ioh, void *buf, uint64 bytes, uint64 addr)
 {
-   uring_handle        *io = (uring_handle *)ioh;
+   platform_default_log("enter uring_read\n");
+   uring_handle       *io   = (uring_handle *)ioh;
+   io_process_context *pctx = &io->ctx[0];
+
    struct io_uring_sqe *sqe;
    struct io_uring_cqe *cqe;
    int                  ret;
 
-   uint64           ctx_idx = get_ctx_idx(io); // 현재 스레드의 io_context
-   struct io_uring *ring    = &io->ctx[ctx_idx].uring_ctx.ring;
+   pthread_mutex_lock(&io_uring_mutex);
 
-   sqe = io_uring_get_sqe(ring);
-   if (sqe == NULL) {
-      platform_error_log("uring_read: failed to get SQE\n");
-      return STATUS_IO_ERROR;
-   }
-
-   memset(sqe, 0, sizeof(*sqe));
+   sqe = io_uring_get_sqe(&pctx->uring_ctx.ring);
    io_uring_prep_read(sqe, io->fd, buf, bytes, addr);
-   io_uring_sqe_set_data(sqe, NULL); // 동기 요청이라 user_data 없음
+   io_uring_sqe_set_data(sqe, NULL);
 
-
-   platform_error_log(
-      "[uring_read] prep_read: fd=%d, buf=%p, addr=0x%lx (%lu), len=%lu\n",
-      io->fd,
-      buf,
-      addr,
-      addr,
-      bytes);
-
-   ret = io_uring_submit_and_wait(ring, 1);
+   ret = io_uring_submit(&pctx->uring_ctx.ring);
    if (ret < 0) {
-      platform_error_log("[uring_read] submit_and_wait failed: %s (ret=%d)\n",
-                         strerror(-ret),
-                         ret);
+      pthread_mutex_unlock(&io_uring_mutex);
       return STATUS_IO_ERROR;
    }
 
-   // ret = io_uring_wait_cqe(ring, &cqe);
-   ret = io_uring_peek_cqe(ring, &cqe);
-   if (ret < 0) {
-      platform_error_log(
-         "[uring_read] wait_cqe failed: %s (ret=%d)\n", strerror(-ret), ret);
-      return STATUS_IO_ERROR;
-   }
+   ret = io_uring_wait_cqe(&pctx->uring_ctx.ring, &cqe);
+   io_uring_cqe_seen(&pctx->uring_ctx.ring, cqe);
 
-   platform_error_log("[uring_read] CQE result: cqe->res = %d\n", cqe->res);
+   pthread_mutex_unlock(&io_uring_mutex);
 
-   ret = cqe->res;
-   io_uring_cqe_seen(ring, cqe);
+   return (cqe->res == (int)bytes) ? STATUS_OK : STATUS_IO_ERROR;
+}
+*/
+static platform_status
+uring_read(io_handle *ioh, void *buf, uint64 bytes, uint64 addr)
+{
+   uring_handle *io;
+   int           ret;
 
-
+   io  = (uring_handle *)ioh;
+   ret = pread(io->fd, buf, bytes, addr);
 #if defined(__has_feature)
 #   if __has_feature(memory_sanitizer)
    __msan_unpoison(buf, ret);
 #   endif
 #endif
-
-   if (ret >= bytes) {
+   if (ret == bytes) {
       return STATUS_OK;
    }
-
-   platform_error_log(
-      "[uring_read] short read: fd=%d, addr=0x%lx, expected=%lu, got=%d\n",
-      io->fd,
-      addr,
-      bytes,
-      ret);
-
-
    return STATUS_IO_ERROR;
 }
-
-/*
-static platform_status
-uring_read(io_handle *ioh, void *buf, uint64 bytes, uint64 addr)
-{
-   uring_handle *io = (uring_handle *)ioh;
-   // 1) 현재 스레드용 io_uring 컨텍스트 인덱스 획득
-   uint64 ctx_idx = get_ctx_idx(io);
-   if (ctx_idx == INVALID_TID) {
-      return STATUS_IO_ERROR;
-   }
-   io_process_context *pctx = &io->ctx[ctx_idx];
-
-   // 2) SQE 얻기 (가득 찼으면 한 번 제출해 보고 다시 시도)
-   struct io_uring_sqe *sqe = io_uring_get_sqe(&pctx->uring_ctx.ring);
-   if (!sqe) {
-      if (io_uring_submit(&pctx->uring_ctx.ring) < 0) {
-         return STATUS_IO_ERROR;
-      }
-      sqe = io_uring_get_sqe(&pctx->uring_ctx.ring);
-      if (!sqe) {
-         return STATUS_IO_ERROR;
-      }
-   }
-
-   // 3) 읽기 요청 준비
-   io_uring_prep_read(sqe,
-                      io->fd, // 파일 디스크립터
-                      buf,    // 사용자 버퍼
-                      bytes,  // 길이
-                      addr);  // 오프셋
-   // user_data가 필요 없으면 NULL, 필요하면 콜백 상태 포인터를 넣어도 됩니다.
-   io_uring_sqe_set_data(sqe, NULL);
-
-   // 4) 제출
-   if (io_uring_submit(&pctx->uring_ctx.ring) < 0) {
-      return STATUS_IO_ERROR;
-   }
-
-   // 5) 완료 대기
-   struct io_uring_cqe *cqe;
-   int                  ret = io_uring_wait_cqe(&pctx->uring_ctx.ring, &cqe);
-   if (ret < 0) {
-      return STATUS_IO_ERROR;
-   }
-
-   int res = cqe->res;
-
-   // 6) 메모리 sanitizer(Unpoison) 처리
-#if defined(__has_feature)
-#   if __has_feature(memory_sanitizer)
-   __msan_unpoison(buf, res);
-#   endif
-#endif
-
-   // 7) CQE 반환 및 결과 확인
-   io_uring_cqe_seen(&pctx->uring_ctx.ring, cqe);
-   return (res == (int)bytes) ? STATUS_OK : STATUS_IO_ERROR;
-}
-   */
 /*
  * laio_write() - Basically a wrapper around pwrite().
  */
@@ -657,101 +472,60 @@ laio_write(io_handle *ioh, void *buf, uint64 bytes, uint64 addr)
    return STATUS_IO_ERROR;
 }
 */
-
+/*
 static platform_status
 uring_write(io_handle *ioh, void *buf, uint64 bytes, uint64 addr)
 {
-   uring_handle        *io = (uring_handle *)ioh;
+   platform_default_log("enter uring_write\n");
+   uring_handle        *io   = (uring_handle *)ioh;
+   io_process_context  *pctx = &io->ctx[0];
    struct io_uring_sqe *sqe;
    struct io_uring_cqe *cqe;
    int                  ret;
 
-   // 현재 스레드에 해당하는 io_uring ring을 가져옴
-   uint64           ctx_idx = get_ctx_idx(io); // 반드시 유효한 인덱스여야 함
-   struct io_uring *ring    = &io->ctx[ctx_idx].uring_ctx.ring;
+   pthread_mutex_lock(&io_uring_mutex);
 
-   sqe = io_uring_get_sqe(ring);
-   if (sqe == NULL) {
+   sqe = io_uring_get_sqe(&pctx->uring_ctx.ring);
+   if (!sqe) {
+      pthread_mutex_unlock(&io_uring_mutex);
       return STATUS_IO_ERROR;
    }
-   memset(sqe, 0, sizeof(*sqe));
+
    io_uring_prep_write(sqe, io->fd, buf, bytes, addr);
-   io_uring_sqe_set_data(sqe, NULL); // 동기니까 user_data 생략
+   io_uring_sqe_set_data(sqe, NULL);
 
-   ret = io_uring_submit_and_wait(ring, 1);
+   ret = io_uring_submit(&pctx->uring_ctx.ring);
    if (ret < 0) {
+      pthread_mutex_unlock(&io_uring_mutex);
       return STATUS_IO_ERROR;
    }
 
-   // ret = io_uring_wait_cqe(ring, &cqe);
-   ret = io_uring_peek_cqe(ring, &cqe);
+   ret = io_uring_wait_cqe(&pctx->uring_ctx.ring, &cqe);
    if (ret < 0) {
+      pthread_mutex_unlock(&io_uring_mutex);
       return STATUS_IO_ERROR;
    }
 
-   ret = cqe->res;
-   io_uring_cqe_seen(ring, cqe);
+   io_uring_cqe_seen(&pctx->uring_ctx.ring, cqe);
 
-   if (ret >= bytes) {
+   pthread_mutex_unlock(&io_uring_mutex);
+
+   return (cqe->res == (int)bytes) ? STATUS_OK : STATUS_IO_ERROR;
+}
+*/
+static platform_status
+uring_write(io_handle *ioh, void *buf, uint64 bytes, uint64 addr)
+{
+   uring_handle *io;
+   int           ret;
+
+   io  = (uring_handle *)ioh;
+   ret = pwrite(io->fd, buf, bytes, addr);
+   if (ret == bytes) {
       return STATUS_OK;
    }
-
    return STATUS_IO_ERROR;
 }
-
-
-// static platform_status
-// uring_write(io_handle *ioh, void *buf, uint64 bytes, uint64 addr)
-// {
-//    uring_handle *io      = (uring_handle *)ioh;
-//    uint64        ctx_idx = get_ctx_idx(io);
-//    if (ctx_idx == INVALID_TID) {
-//       return STATUS_IO_ERROR;
-//    }
-//    io_process_context  *pctx = &io->ctx[ctx_idx];
-//    struct io_uring     *ring = &pctx->uring_ctx.ring;
-//    struct io_uring_sqe *sqe;
-//    struct io_uring_cqe *cqe;
-//    int                  ret;
-
-//    /* 1) SQE 획득 (가득 찼으면 한 번 제출 후 재시도) */
-//    sqe = io_uring_get_sqe(ring);
-//    if (!sqe) {
-//       if (io_uring_submit(ring) < 0) {
-//          return STATUS_IO_ERROR;
-//       }
-//       sqe = io_uring_get_sqe(ring);
-//       if (!sqe) {
-//          return STATUS_IO_ERROR;
-//       }
-//    }
-
-//    /* 2) 쓰기 요청 준비 */
-//    io_uring_prep_write(sqe,
-//                        io->fd, // SplinterDB 파일 디스크립터
-//                        buf,    // 쓰기 버퍼
-//                        bytes,  // 길이
-//                        addr);  // 오프셋
-//    io_uring_sqe_set_data(sqe, NULL);
-
-//    /* 3) 제출 */
-//    if (io_uring_submit(ring) < 0) {
-//       return STATUS_IO_ERROR;
-//    }
-
-//    /* 4) 완료 대기 */
-//    ret = io_uring_wait_cqe(ring, &cqe);
-//    if (ret < 0) {
-//       return STATUS_IO_ERROR;
-//    }
-
-//    /* 5) 결과 확인 및 CQE 반환 */
-//    int res = cqe->res;
-//    io_uring_cqe_seen(ring, cqe);
-
-//    return (res == (int)bytes) ? STATUS_OK : STATUS_IO_ERROR;
-// }
-
 /*
  * Accessor method: Return opaque handle to IO-context setup by io_setup().
  */
@@ -767,6 +541,7 @@ laio_get_thread_context(io_handle *ioh)
    return &io->ctx[io->ctx_idx[tid]];
 }
 */
+/*
 static io_process_context *
 uring_get_thread_context(io_handle *ioh)
 {
@@ -776,6 +551,25 @@ uring_get_thread_context(io_handle *ioh)
    platform_assert(
       io->ctx_idx[tid] < MAX_THREADS, "Invalid ctx_idx=%lu", io->ctx_idx[tid]);
    return &io->ctx[io->ctx_idx[tid]];
+}
+   */
+static io_process_context *
+uring_get_thread_context(io_handle *ioh)
+{
+   uring_handle *io  = (uring_handle *)ioh;
+   pid_t         pid = platform_getpid();
+
+   // pid 로 등록된 slot 찾기
+   for (int i = 0; i < MAX_THREADS; i++) {
+      if (io->ctx[i].pid == pid) {
+         return &io->ctx[i];
+      }
+   }
+
+   // 없으면 치명적 에러
+   platform_assert(
+      false, "uring_get_thread_context: no context for pid=%d", pid);
+   return NULL; // 절대 도달하지 않음
 }
 /*
 typedef struct laio_async_state {
@@ -798,7 +592,25 @@ typedef struct laio_async_state {
    struct iovec        iov[];
 } laio_async_state;
 */
-
+typedef struct uring_async_state {
+   io_async_state      super;
+   async_state         __async_state_stack[1];
+   uring_handle       *io;
+   io_async_cmd        cmd;
+   uint64              addr;
+   async_callback_fn   callback;
+   void               *callback_arg;
+   async_waiter        waiter_node;
+   io_process_context *pctx;
+   platform_status     rc;
+   struct iocb         req;
+   struct iocb        *reqs[1];
+   uint64              ctx_idx;
+   int                 status;
+   uint64              iovlen;
+   struct iovec       *iovs;
+   struct iovec        iov[];
+} uring_async_state;
 
 _Static_assert(
    sizeof(uring_async_state) <= IO_ASYNC_STATE_BUFFER_SIZE,
@@ -890,6 +702,17 @@ laio_async_callback(io_context_t ctx, struct iocb *iocb, long res, long res2)
    }
 }
 */
+static void
+uring_async_callback(io_context_t ctx, struct iocb *iocb, long res, long res2)
+{
+   uring_async_state *ios =
+      (uring_async_state *)((char *)iocb - offsetof(uring_async_state, req));
+   ios->status = res;
+   if (ios->callback) {
+      ios->callback(ios->callback_arg);
+   }
+}
+
 /*
 static async_status
 laio_async_run(io_async_state *gios)
@@ -1010,7 +833,7 @@ laio_async_run(io_async_state *gios)
 }
 */
 
-
+/*
 static async_status
 uring_async_run(io_async_state *gios)
 {
@@ -1063,109 +886,108 @@ uring_async_run(io_async_state *gios)
 io_completed:
    async_return(ios);
 }
+*/
+static async_status
+uring_async_run(io_async_state *gios)
+{
+   int                submit_status = 1;
+   async_wait_queue  *queue         = NULL;
+   uring_async_state *ios           = (uring_async_state *)gios;
 
+   async_begin(ios, 0);
 
-// static async_status
-// uring_async_run(io_async_state *gios)
-// {
-//    int                submit_status = 1;
-//    async_wait_queue  *queue         = NULL;
-//    uring_async_state *ios           = (uring_async_state *)gios;
-//    uring_handle      *io            = (uring_handle *)ios->io;
-//    struct io_uring   *ring;
+   // iovlen==0 면 즉시 종료
+   if (ios->iovlen == 0) {
+      async_return(ios);
+   }
 
-//    async_begin(ios, 0);
+   platform_default_log("enter uring_async_run\n");
+   // thread‑local context 가져오기 (libaio와 동일한 함수 사용)
+   ios->pctx = uring_get_thread_context((io_handle *)ios->io);
 
-//    /* no I/O vectors? 바로 완료 */
-//    if (ios->iovlen == 0) {
-//       async_return(ios);
-//    }
+   // pthread_mutex_lock(&io_uring_mutex);
 
-//    /* 스레드별 io_uring 컨텍스트 얻기 */
-//    {
-//       uint64 ctx_idx = get_ctx_idx(io);
-//       if (ctx_idx == INVALID_TID) {
-//          ios->status = -EINVAL;
-//          async_return(ios);
-//       }
-//       ios->pctx = &io->ctx[ctx_idx];
-//    }
-//    ring = &ios->pctx->uring_ctx.ring;
+   // 1) SQE 준비
+   struct io_uring_sqe *sqe = io_uring_get_sqe(&ios->pctx->uring_ctx.ring);
+   if (sqe) {
+      if (ios->cmd == io_async_preadv) {
+         io_uring_prep_readv(
+            sqe, ios->io->fd, ios->iovs, ios->iovlen, ios->addr);
+      } else {
+         io_uring_prep_writev(
+            sqe, ios->io->fd, ios->iovs, ios->iovlen, ios->addr);
+      }
+      // libaio 스타일 콜백(req.data/laio_async_callback, req.obj=state)
+      // 을 그대로 재사용하기 위해 iocb(req) 주소를 user_data로 설정
 
-//    while (1) {
-//       /* 완료 시 복귀 레이블 저장 */
-//       ios->__async_state_stack[0] = &&io_has_completed;
+      io_set_callback(&ios->req, uring_async_callback);
+      io_uring_sqe_set_data(sqe, &ios->req);
+      submit_status = 0; // io_uring_submit에서 실제 제출 처리
+   } else {
+      // SQE 슬롯 없으면 EAGAIN처럼 취급
+      submit_status = -EAGAIN;
+   }
 
-//       if (queue) {
-//          async_wait_queue_lock(queue);
-//       }
+   // io_count 증가 (cleanup 쪽에서 반대로 감소)
+   __sync_fetch_and_add(&ios->pctx->io_count, 1);
 
-//       /* 1) SQE 확보 (가득 차 있으면 submit 후 재시도) */
-//       struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
-//       if (!sqe) {
-//          io_uring_submit(ring);
-//          sqe = io_uring_get_sqe(ring);
-//          if (!sqe) {
-//             if (queue)
-//                async_wait_queue_unlock(queue);
-//             __sync_fetch_and_sub(&ios->pctx->io_count, 1);
-//             ios->status = -EAGAIN;
-//             async_return(ios);
-//          }
-//       }
+   platform_default_log("count=%lu\n", ios->pctx->io_count);
 
-//       /* 2) I/O 요청 준비 */
-//       if (ios->cmd == io_async_preadv) {
-//          io_uring_prep_readv(sqe, io->fd, ios->iovs, ios->iovlen, ios->addr);
-//       } else {
-//          io_uring_prep_writev(sqe, io->fd, ios->iovs, ios->iovlen,
-//          ios->addr);
-//       }
-//       io_uring_sqe_set_data(sqe, ios);
+   // pthread_mutex_unlock(&io_uring_mutex);
 
-//       /* 3) inflight 카운터 증가 */
-//       __sync_fetch_and_add(&ios->pctx->io_count, 1);
+   // 2) 제출 시도 루프 (libaio의 io_submit+yield 로직 재현)
+   while (1) {
+      // 완료 시점에 이 위치에서 resume 되도록 마킹
+      ios->__async_state_stack[0] = &&io_has_completed;
 
-//       /* 4) 제출 */
-//       submit_status = io_uring_submit(ring);
+      if (queue != NULL) {
+         async_wait_queue_lock(queue);
+      }
 
-//       if (submit_status > 0) {
-//          /* 성공: 커널에 state handed‑off */
-//          if (queue)
-//             async_wait_queue_unlock(queue);
-//          return ASYNC_STATUS_RUNNING;
+      if (submit_status != 1) {
+         submit_status = io_uring_submit(&ios->pctx->uring_ctx.ring);
+         platform_default_log("after submit\n");
+      }
 
-//       } else if (submit_status < 0 && submit_status != -EAGAIN) {
-//          /* 치명적 실패 */
-//          if (queue)
-//             async_wait_queue_unlock(queue);
-//          __sync_fetch_and_sub(&ios->pctx->io_count, 1);
-//          ios->status = submit_status;
-//          platform_error_log("%s(): io_uring_submit error=%d: %s\n",
-//                             __func__,
-//                             -submit_status,
-//                             strerror(-submit_status));
-//          async_return(ios);
+      if (submit_status > 0) {
+         // 성공적으로 SQE가 커널에 전달된 경우
+         if (queue != NULL) {
+            async_wait_queue_unlock(queue);
+         }
+         return ASYNC_STATUS_RUNNING;
 
-//       } else if (submit_status == -EAGAIN && queue) {
-//          /* 일시적 실패 → 대기열에 추가 후 yield */
-//          async_wait_queue_append(
-//             queue, &ios->waiter_node, ios->callback, ios->callback_arg);
-//          async_yield_after(ios, async_wait_queue_unlock(queue));
-//          /* 재진입 시 queue == NULL 로 reset */
+      } else if (submit_status < 0 && submit_status != -EAGAIN) {
+         // 치명적 오류
+         if (queue != NULL) {
+            async_wait_queue_unlock(queue);
+         }
+         __sync_fetch_and_sub(&ios->pctx->io_count, 1);
+         ios->status = submit_status; // 음수 errno
+         platform_error_log("%s(): OS-pid=%d, tid=%lu, submit errorno=%d: %s\n",
+                            __func__,
+                            platform_getpid(),
+                            platform_get_tid(),
+                            -submit_status,
+                            strerror(-submit_status));
+         async_return(ios);
 
-//       } else {
-//          /* 첫 EAGAIN, queue 없이 시도했다면 대기열 모드로 전환 */
-//          queue = &ios->pctx->submit_waiters;
-//       }
+      } else if (queue != NULL) {
+         // EAGAIN + 이미 lock 중: 대기 큐에 자신 등록 후 yield
+         async_wait_queue_append(
+            queue, &ios->waiter_node, ios->callback, ios->callback_arg);
+         async_yield_after(ios, async_wait_queue_unlock(queue));
+         queue = NULL;
 
-//    io_has_completed:
-//       /* I/O 완료 후 복귀 */
-//       async_return(ios);
-//    }
+      } else {
+         // EAGAIN + 첫 시도: submit_waiters 큐 사용
+         queue = &ios->pctx->submit_waiters;
+      }
+   }
 
-//    platform_assert(0, "should not reach here");
-// }
+io_has_completed:
+   // cleanup 루틴에서 callback이 호출된 뒤 돌아오는 지점
+   async_return(ios);
+}
 
 
 /*
@@ -1328,6 +1150,7 @@ laio_cleanup(io_handle *ioh, uint64 count)
    }
 }
 */
+
 /*
 static void
 uring_cleanup(io_handle *ioh, uint64 count)
@@ -1346,40 +1169,44 @@ uring_cleanup(io_handle *ioh, uint64 count)
       i += uring_cleanup_one(pctx, 0);
    }
 }
-   */
+*/
+
 static void
 uring_cleanup(io_handle *ioh, uint64 count)
 {
-   uring_handle *io = (uring_handle *)ioh;
-
-   threadid tid = platform_get_tid();
+   uring_handle *io  = (uring_handle *)ioh;
+   threadid      tid = platform_get_tid();
    platform_assert(tid < MAX_THREADS, "Invalid tid=%lu", tid);
    platform_assert(
       io->ctx_idx[tid] < MAX_THREADS, "Invalid ctx_idx=%lu", io->ctx_idx[tid]);
-
    io_process_context *pctx = &io->ctx[io->ctx_idx[tid]];
 
-   int i = 0;
+   platform_default_log("enter uring_cleanup: count=%lu, inflight_io=%lu\n",
+                        count,
+                        pctx->io_count);
 
-   while (count == 0 || i < count) {
-      int cleaned = uring_cleanup_one(pctx, 0);
+   int processed = 0;
+   while ((count == 0 || processed < count) && pctx->io_count > 0) {
+      platform_default_log("  uring_cleanup loop: processed=%d, io_count=%lu\n",
+                           processed,
+                           pctx->io_count);
 
-      if (cleaned == 0) {
-         // 지금 완전히 idle (io_count도 없고 CQE도 없음)
-         platform_default_log("[uring_cleanup] cleaned==0, io_count=%lu\n",
-                              pctx->io_count);
-         if (pctx->io_count == 0) {
-            platform_default_log("[uring_cleanup] io_count==0 → break\n");
-            break;
-         }
+      int got = uring_cleanup_one(pctx, 0);
+      platform_default_log("    uring_cleanup_one returned: %d\n", got);
 
-         // inflight는 있는데 아직 CQE가 안 도착했을 가능성
-         platform_yield();
-      } else {
-         i += cleaned;
+      if (got <= 0) {
+         platform_default_log("    no more CQEs to process, breaking\n");
+         break;
       }
+      processed += got;
    }
+
+   platform_default_log(
+      "exit uring_cleanup: processed=%d, remaining io_count=%lu\n",
+      processed,
+      pctx->io_count);
 }
+
 
 /*
  * laio_wait_all() - Handle completion of outstanding IO requests for our
@@ -1485,6 +1312,7 @@ laio_deregister_thread(io_handle *ioh)
    unlock_ctx(io);
 }
 */
+/*
 static void
 uring_deregister_thread(io_handle *ioh)
 {
@@ -1518,7 +1346,7 @@ uring_deregister_thread(io_handle *ioh)
 
       io_uring_queue_exit(&pctx->uring_ctx.ring); // io_destroy 대체
 
-      // pthread_join(pctx->io_cleaner, NULL);
+      pthread_join(pctx->io_cleaner, NULL);
 
       async_wait_queue_deinit(&pctx->submit_waiters);
 
@@ -1529,6 +1357,92 @@ uring_deregister_thread(io_handle *ioh)
 
    unlock_ctx(io);
 }
+*/
+/*
+static void
+uring_deregister_thread(io_handle *ioh)
+{
+   uring_handle       *io   = (uring_handle *)ioh;
+   io_process_context *pctx = uring_get_thread_context(ioh);
+
+   platform_assert(
+      (pctx != NULL),
+      "Attempting to deregister IO for thread ID=%lu found no context.\n",
+      platform_get_tid());
+
+   // 1) 남아있는 모든 완료 이벤트 처리
+   uring_cleanup(ioh, 0);
+
+   lock_ctx(io);
+   pctx->thread_count--;
+   if (pctx->thread_count == 0) {
+      // 2) 더 이상 I/O를 처리하지 않음을 표시
+
+      pctx->shutting_down = TRUE;
+
+      // 3) 아직 인플라이트 I/O가 없어야 안전
+      debug_assert(pctx->io_count == 0, "io_count=%lu", pctx->io_count);
+
+      // 4) io_destroy() → io_uring_queue_exit()
+      io_uring_queue_exit(&pctx->uring_ctx.ring);
+
+      // 5) 백그라운드 클리너 쓰레드 종료 대기
+      pthread_join(pctx->io_cleaner, NULL);
+      platform_default_log("deregister\n");
+
+      // 6) submit 대기 큐 해제
+      async_wait_queue_deinit(&pctx->submit_waiters);
+
+      // 7) 내부 구조체를 모두 0으로 초기화(다음 등록을 위해)
+      memset(&pctx->uring_ctx.ring, 0, sizeof(pctx->uring_ctx.ring));
+      pctx->pid = 0;
+   }
+   unlock_ctx(io);
+}
+*/
+static void
+uring_deregister_thread(io_handle *ioh)
+{
+   uring_handle       *io   = (uring_handle *)ioh;
+   io_process_context *pctx = uring_get_thread_context(ioh);
+
+   // 1) 처리 남은 이벤트들 마저 처리
+   uring_cleanup(ioh, 0);
+
+   lock_ctx(io);
+   pctx->thread_count--;
+   if (pctx->thread_count == 0) {
+      // 2) 더 이상 I/O 처리 안 함 표시
+      pctx->shutting_down = TRUE;
+      unlock_ctx(io);
+      // pthread_mutex_lock(&io_uring_mutex);
+      //  3) NOP 하나 제출해서 wait_cqe() 블록을 풀어 준다
+      {
+         // (경쟁 방지를 위해 mutex 감싸도 좋습니다)
+         struct io_uring_sqe *sqe = io_uring_get_sqe(&pctx->uring_ctx.ring);
+         if (sqe) {
+            io_uring_prep_nop(sqe);
+            io_uring_submit(&pctx->uring_ctx.ring);
+         }
+      }
+      // pthread_mutex_unlock(&io_uring_mutex);
+      //  4) cleaner 쓰레드가 빠져나오길 기다림
+      // pthread_join(pctx->io_cleaner, NULL);
+
+      // 5) 링 해제
+      io_uring_queue_exit(&pctx->uring_ctx.ring);
+
+      // 6) 대기 큐 정리
+      async_wait_queue_deinit(&pctx->submit_waiters);
+
+      // 7) 구조체 초기화
+      memset(&pctx->uring_ctx.ring, 0, sizeof(pctx->uring_ctx.ring));
+      pctx->pid = 0;
+      return;
+   }
+   unlock_ctx(io);
+}
+
 
 /*
  * Define an implementation of the abstract IO Ops interface methods.
@@ -1545,7 +1459,7 @@ static io_ops laio_ops = {
 };
 */
 
-io_ops uring_ops = {
+static io_ops uring_ops = {
    .read              = uring_read,
    .write             = uring_write,
    .async_state_init  = uring_async_state_init,
