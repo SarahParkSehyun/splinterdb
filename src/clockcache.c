@@ -2299,7 +2299,17 @@ clockcache_prefetch_callback(void *pfs)
       return;
    }
 
-   platform_assert_status_ok(io_async_state_get_result(state->iostate));
+   // platform_assert_status_ok(io_async_state_get_result(state->iostate));
+
+   {
+      platform_status st = io_async_state_get_result(state->iostate);
+      if (st.r < 0) {
+         // I/O 에러인 경우만 로그 찍고 종료
+         platform_default_log("prefetch I/O failed: %d", st.r);
+         return;
+      }
+      // st.r >= 0 이면 읽은 바이트 수이므로 정상 처리
+   }
 
    const struct iovec *iovec;
    uint64              count;

@@ -16,10 +16,9 @@
  *   laio_get_async_req(), followed by filling in its metadata and iovec
  *   members using laio_get_metadata() and laio_get_iovec().
  */
-
+#include <liburing.h>
 #define POISON_FROM_PLATFORM_IMPLEMENTATION
 #include "platform.h"
-
 #include "async.h"
 #include "laio.h"
 #include <sys/prctl.h>
@@ -125,11 +124,11 @@ uring_cleanup_one(io_process_context *pctx, int mincnt)
 
    if (mincnt > 0) {
       ret = io_uring_wait_cqe(&pctx->uring_ctx.ring, &cqe);
-      if (ret < 0)
+      if (ret < 0 || cqe == NULL)
          return 0;
    } else {
       ret = io_uring_peek_cqe(&pctx->uring_ctx.ring, &cqe);
-      if (ret <= 0)
+      if (ret <= 0 || cqe == NULL)
          return 0;
    }
 
@@ -389,8 +388,8 @@ get_ctx_idx(uring_handle *io)
          // io_uring 큐 초기화
 
          struct io_uring_params p = {
-            .flags          = 0,
-            .sq_thread_idle = 0 /* ms 단위로 5ms 후에 스레드가 sleep */
+            .flags          = IORING_SETUP_SQPOLL,
+            .sq_thread_idle = 10 /* ms 단위로 5ms 후에 스레드가 sleep */
          };
 
          int status = io_uring_queue_init_params(io->cfg->kernel_queue_size,
@@ -405,6 +404,12 @@ get_ctx_idx(uring_handle *io)
             unlock_ctx(io);
             return INVALID_TID;
          }
+         unsigned int max_wq  = 2;
+         int          ring_fd = io->ctx[i].uring_ctx.ring.ring_fd;
+
+         io_uring_register(
+            ring_fd, IORING_REGISTER_IOWQ_MAX_WORKERS, &max_wq, 1);
+
 
          io->ctx[i].pid           = pid;
          io->ctx[i].thread_count  = 1;
@@ -782,12 +787,10 @@ uring_async_run(io_async_state *gios)
       submit_status = -EAGAIN;
    }
 
-   /* 4) outstanding count 증가 */
    __sync_fetch_and_add(&ios->pctx->io_count, 1);
    platform_default_log("uring_async_run: io_count++ → %lu\n",
                         (unsigned long)ios->pctx->io_count);
 
-   /* 5) 제출 + EAGAIN 재시도 루프 */
    while (1) {
       ios->__async_state_stack[0] = &&io_has_completed;
       platform_default_log("uring_async_run: loop start (submit_status=%d)\n",
@@ -814,24 +817,10 @@ uring_async_run(io_async_state *gios)
          return ASYNC_STATUS_RUNNING;
 
       io_has_completed:
-         /* 6) cleanup에서 release_one()으로 wake된 후 복귀 */
          platform_default_log("uring_async_run: resumed at io_has_completed, "
                               "calling user callback\n");
 
          async_return(ios);
-
-         // platform_default_log(
-         //    "uring_async_run: submit OK, queueing and yielding\n");
-         // async_wait_queue_append(&ios->pctx->submit_waiters,
-         //                         &ios->waiter_node,
-         //                         ios->callback,
-         //                         ios->callback_arg);
-         // platform_default_log("uring_async_run: appended to
-         // submit_waiters\n"); async_yield_after(ios,
-         //                   async_wait_queue_unlock(&ios->pctx->submit_waiters));
-         // /* 깨어나면 io_has_completed 레이블로 복귀 */
-         // queue = NULL;
-         // goto io_has_completed;
 
       } else if (submit_status < 0 && submit_status != -EAGAIN) {
          platform_default_log("uring_async_run: fatal submit error %d\n",
@@ -853,7 +842,6 @@ uring_async_run(io_async_state *gios)
             queue, &ios->waiter_node, ios->callback, ios->callback_arg);
          platform_default_log("uring_async_run: yielding after append\n");
          async_yield_after(ios, async_wait_queue_unlock(queue));
-         // queue = NULL;
 
       } else if (submit_status == -EAGAIN) {
          platform_default_log(

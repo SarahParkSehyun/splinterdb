@@ -1,0 +1,4872 @@
+[33mcommit af19bb60663c2bcbb2983743b5be9286a457a2dc[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32muring-debug3[m[33m)[m
+Author: SarahParkSehyun <sarah1918@naver.com>
+Date:   Tue Aug 5 08:19:13 2025 +0000
+
+    Debugging
+
+[33mcommit e1e452bf0ff1ad2516fceccbcc6a512a5c5ad7b3[m
+Author: SarahParkSehyun <sarah1918@naver.com>
+Date:   Thu Jul 24 08:52:36 2025 +0000
+
+    Debugging
+
+[33mcommit f9599fe1fb129cda453e0b5a4db8f3cab0835565[m[33m ([m[1;31morigin/uring-debug[m[33m, [m[1;32muring-debug[m[33m)[m
+Author: SarahParkSehyun <sarah1918@naver.com>
+Date:   Tue Jul 22 10:56:15 2025 +0000
+
+    Debugging
+
+[33mcommit c42fa01f4ab4dc578762b3d8347256731714c54d[m
+Author: SarahParkSehyun <sarah1918@naver.com>
+Date:   Wed Jul 16 07:40:43 2025 +0000
+
+    Add io_uring backend + debug logs
+
+[33mcommit ecd41560cee1bfb1d5038fce381b185465c81eff[m[33m ([m[1;31morigin/main[m[33m, [m[1;32mmain[m[33m)[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Thu Jul 3 22:09:17 2025 -0700
+
+    Update limitations.md
+
+[33mcommit 9b289bf03dddbfd85c4dda7b7157c2d90e74466e[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Thu Jul 3 20:56:11 2025 -0700
+
+    Robj/deadlock fix (#644)
+    
+    This patch fixes two deadlocks, also enabling threads to perform updates to splinterdb while also performing asynchronous queries.
+    
+    The first deadlock was caused by trunk_merge_lookup acquiring two locks on the root. This deadlock prone because, if another thread begins to GC the root, it will set the writer bit on the root lock and then wait for the readers to clear out. But, if the query code has already acquired its first read lock on the root and attempts to acquire its second read lock after the writer bit is set, then it will deadlock with the GC thread.
+    
+    The fix is to acquire a lock on the root only once.
+    
+    The second deadlock could occur when a thread performing asynchronous queries performs an update which results in a GC. In this case, one of the thread's async queries may hold a read lock on a node-to-be-GCed, but the GC code will wait forever for that read lock to be released, causing the thread to deadlock with itself.
+    
+    The fix in this case is to defer GC until there are no more readers. So there's now a queue of GC tasks in the trunk context. Any time GC reaches a node with a read lock, it stops and puts that node on the queue. Every trunk modification checks the queue and processes any GCs that are now available to perform.
+
+[33mcommit 7fecf01d86d560db277cffb40608dd5b6462177b[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Tue Jun 24 15:53:19 2025 -0700
+
+    Implement an exact match on the test suite
+    
+    Signed-off-by: Don Porter <porter@cs.unc.edu>
+    Co-authored-by: Don Porter <porter@cs.unc.edu>
+
+[33mcommit 4772b98c53bc698d1f33fc074489fca13786cefe[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Tue Jun 24 02:00:54 2025 -0700
+
+    Fix several bugs in cache_test (#642)
+    
+    test_wait_inflight did not match how it was used from test_do_read_batch.
+    
+    Also, cache_assert_ungot was attempting to implement an impossible check and the test was attempting to use that check.
+    
+    clockcache_assert_ungot was trying to check only that the current thread did not hold a read lock on the specificied page. But, since CC_RC_WIDTH is only 4, multiple threads may share the same read counter and hence, even if one thread holds no locks, the read counter for a page may be non-zero. So I changed clockcache_assert_ungot to check that no thread has a read lock on the page, which matches its description.
+    
+    I then modified cache_test to use the corrected cache_assert_ungot.
+    
+    Fixes #306.
+
+[33mcommit 72e991ee0907150efe06dabe23157baa5ac28ce1[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Fri Jun 13 23:27:56 2025 -0700
+
+    Rewrite trunk for better cow and modularity
+    
+    This is a complete rewrite of the trunk to make it copy on write, to enable it to garbage collect old nodes, to make the code more modular, to separate the on-disk representation of nodes from the in-memory representation, to enable nodes to be larger than a page, and to fix several liveness and concurrency bugs in the old trunk.
+    
+    The code introduces several new components, including a new system for writing async code, a new vector data type, and new code for easily printing well-formatted tables.
+    
+    The code also contains a slew of other bug fixes encountered while solidifying this code.
+
+[33mcommit 860d71b9484b37f8250def5e933dcf33dde8920d[m
+Author: Deukyeon Hwang <deukyeon@users.noreply.github.com>
+Date:   Mon Mar 3 17:09:59 2025 -0800
+
+    Set all 64 bits of tid_bitmask[i] to 1 (#638)
+    
+    * Initialized all bits of tid_bitmask to 1
+    
+    ---------
+    
+    Co-authored-by: Rob Johnson <rob@robjohnson.io>
+
+[33mcommit 38258e197dd05c057ff8bbf70dbfa09ed515b5f0[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Tue Dec 24 23:11:42 2024 -0800
+
+    Generalize MAX_THREADS (#636)
+    
+    Enable any number of MAX_THREADS
+
+[33mcommit 525299b76c303ce1e881ea434e99c88926924ba3[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Tue Dec 24 20:41:18 2024 -0800
+
+    Robj/clang format 16 (#637)
+    
+    move to clang-16 and clang-format-16
+
+[33mcommit 1939a12a2502be0899158aa89f5e1da4d23bcd64[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Sat Sep 21 12:33:49 2024 -0700
+
+    edit website to remove tealium and switch to gtm (#634)
+
+[33mcommit f6c962ee41e389b63d1a2805e86abd6fc3271896[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Mon Sep 9 16:45:01 2024 -0700
+
+    collect some statistics about compact-then-flush (#633)
+    
+    collect some statistics about compact-then-flush
+
+[33mcommit 93984e6a2dd0f918b526983598250c7b8107ac04[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Wed Aug 28 01:17:03 2024 -0700
+
+    Fix btree deadlock between leaf splits and iterator initialization. (#631)
+    
+    retry insert if we retry too many times to lock successor during a leaf split
+
+[33mcommit a1c1fdf18338a971c91dbd388ca2f0c7677fb052[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Tue Aug 13 16:35:48 2024 -0700
+
+    fix btree iterator signed comparison bug (#630)
+
+[33mcommit 08d3cdb52f2d426a5060bbf8155cdd7496f78414[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Tue Aug 13 15:00:38 2024 -0700
+
+    fix compact_bundle to enqueue filter compaction for entire range (#628)
+    
+    fix compact_bundle to enqueue filter compaction for entire range
+
+[33mcommit 369bf55661b0af87905753bc3f252456d1285cfd[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Wed May 22 16:53:01 2024 -0700
+
+    Robj/onetrust scriptid (#627)
+    
+    update to Broadcom's OneTrust script ID
+
+[33mcommit 655988f74cff61c91ceab171291a5fe58320a138[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Wed May 22 13:16:55 2024 -0700
+
+    Robj/deukyeon deadlock (#626)
+    
+    fix several compact_bundle bugs when index node has split
+
+[33mcommit 05654abb4a0e2a87ad0bc42a08a068aac9f05eb3[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Sat May 18 17:11:11 2024 -0700
+
+    Robj/print node (#625)
+    
+    cleanup trunk printing and add node ids
+
+[33mcommit 6a4afab599d4dceb96933150c4d69a348cb17f9f[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Thu May 16 13:30:23 2024 -0700
+
+    Robj/fallocate blockdev fix (#623)
+    
+    don't fallocate on block devices
+
+[33mcommit ac426e461eddf40d5d4362b19d2b05d9f19ffaf8[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Thu May 16 10:43:48 2024 -0700
+
+    Robj/leaf split fix (#624)
+    
+    Fix bug where a leaf split that resulted in a single leaf would cause an assertion failure in a subsequent compaction.
+    
+    The cause of the bug was that the compaction code detected node splits by checking whether the upper-bound key of the node had changed since the compaction request was created.  However, in a leaf split into 1 leaf, the upper bound key doesn't change, but the leaf does get rebundled, meaning that the bundle in the compaction request is no longer live.  This meant that the compaction thought it was seeing a dead bundle in a node that had not split.  This should only occur if the bundle gets flushed from a parent to a child between the enqueuing of the compaction and its execution.  But that can only occur if the node is not a leaf.  Hence the compaction code asserted that the node was not a leaf in this case.
+    
+    To fix the bug, we improve the way node splits are detected. Every node has a unique id in its header.  IDs change whenever a node is split, which makes detecting splits trivial.
+
+[33mcommit a46705bae5a1dd627e43e207a2cde2d177d52ee5[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Wed Apr 17 14:10:54 2024 -0700
+
+    Fix O_DIRECT and multi-threaded io_context issues (#621)
+    
+    * enable --set-O_DIRECT flag in large_inserts_stress_test
+    * workaround linux aio oddity: with O_DIRECT, io_getevents with a NULL timeout may still return 0 even though there are in-flight IOs.
+    * switch to per-process io contexts
+
+[33mcommit 9359c9aa782dd56cfd7f0c2e20e6f92988fe2500[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Thu Feb 29 08:38:51 2024 -0800
+
+    Robj/badge (#619)
+    
+    add badge to README.md
+
+[33mcommit 77f8fc91e88c9dd7cf2b3562d27079cc01aff04f[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Wed Feb 28 01:19:01 2024 -0800
+
+    Set up github actions CI (#617)
+    
+    * fix some memory leaks
+    * fix some build-system bugs and add a memory-safety assert
+    * remove databases during tests to reduce disk usage
+    * Create run-tests.yml
+
+[33mcommit 2eacefaf316ef9efb601677016ed37a671259230[m
+Author: Aditya Gurajada <gapisback@gmail.com>
+Date:   Fri Jan 26 15:36:52 2024 -0800
+
+    (#599) Replace calls to getpid() with platform'ized platform_getpid()
+    
+    This commit cleans-up the `#include <unistd.h>` from several .c
+    files that needed access to get pid(). Instead, change the code
+    to invoke platform_getpid(), now defined in platform_inline.h
+
+[33mcommit 23f5e4f3941f62102abfdf3e4fceb53d2b0b08dd[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Wed Jan 24 05:55:16 2024 -0800
+
+    Refactor to save / print shmem usage stats using common struct.
+    
+    This commit refactors shared memory usage stats fields to
+    drive-off shminfo_usage_stats{} struct entirely. Add
+    platform_save_usage_stats(), used by platform_shm_print_usage().
+    
+    This refactoring paves the way for upcoming PR #569 which
+    is adding more memory-usage stats fields.
+
+[33mcommit 4c0a22562829c90e4466d4fd13b7bd9305c52250[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Sun Dec 10 11:49:54 2023 -0800
+
+    shmem.c: Rename variables relating to large-fragment handling.
+    
+    Upcoming PR #569 is bringing-in support for handling small
+    fragments. This commit renames existing variables, field names
+    and a few function names that deal with large-fragment support
+    to consistently use 'large' in the name. This clears the way
+    in the namespace for code changes coming from small-fragment
+    changes.
+    
+    Some examples:
+    - struct shm_frag_info -> struct shm_large_frag_info
+    - E.g., shm_frag_addr -> frag_addr, shm_frag_size -> frag_size ...
+    - shm_frag_info shm_mem_frags[] -> shm_large_frag_info shm_large_frags[]
+    - shm_num_frags_tracked -> shm_nlarge_frags_tracked
+    - platform_shm_find_free() -> platform_shm_find_large()
+    
+    NOTE: No other code-/logic-changes are done with this commit.
+
+[33mcommit 634df21de77e3cfe637c7172352edaa9cfed0e76[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Wed Jan 24 04:24:36 2024 -0800
+
+    Robj/fallocate (#601)
+    
+    catch fallocate failure
+
+[33mcommit ef74125f672f1dba0ef543a924c8cdb222db9a1a[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Sat Dec 9 22:30:15 2023 -0800
+
+    (#604) Cache page-size in local variables to reduce multiple lookups.
+    
+    In debug-build test runs, profiling shows interfaces
+    like clockcache_page_size(), clockcache_config_page_size()
+    bubbling up to the top of 'perf top' output. This commit
+    replaces multiple calls to lookup functions that retrieve
+    the page-size by caching the page-size once per function
+    where it's used multiple times.
+    
+    The affected interfaces are: btree_page_size(),
+    clockcache_page_size(), cache_page_size(),
+    cache_config_page_size(), trunk_page_size() and a few
+    similar ones.
+    
+    These changes add up to saving few seconds of test-execution
+    (out of few mins of run-time) in debug-build mode, esp for
+    BTree-related tests.
+
+[33mcommit 3e259ca7abfa4941e704d9d65e03391008fbc78e[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Sun Dec 10 07:58:21 2023 -0800
+
+    test.sh: Enable running by named-function w/o shared memory.
+    
+    This commit adds minor improvements / bug-fixes to test.sh:
+    
+    - The capability to run individual test-function(s) by name
+      was not working without the "--use-shmem" flag. Rework the
+      parameter parsing in all test-functions so that we can now
+      invoke this driver script as:
+    
+        $ INCLUDE_SLOW_TESTS=true ./test.sh run_slower_unit_tests
+    
+      This will run individually named test-functions with
+      default memory configuration.
+    
+    - run_other_driver_tests() had a bug where tests run by this
+      function were not honoring '--use-shmem' arg. Fix this so
+      that cache_test, log_test, filter_test can now also be run
+      with "--use-shmem" enabled.
+    
+    - Introduce Use_shmem global to parse-out --use-shmem arg.
+      Rework minion test-functions to drive off of global variable.
+    
+    - Update elapsed-time tracking to separately track the test
+      execution run-times w/o and w/ shared memory configured.
+
+[33mcommit c340a0e576c940a252989e5f00be09f7e085ce98[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Sun Dec 10 06:43:01 2023 -0800
+
+    Rename large_inserts_bugs_stress_test.c -> large_inserts_stress_test.c
+    
+    Upcoming PR #569 is overhauling large-inserts stress test.
+    To simplify examining the diffs of this test case as part
+    of that review, this commit is renaming the test file
+    to large_inserts_stress_test.c . Make appropriate changes
+    to the build Makefile and test files, to pickup new file.
+
+[33mcommit ae4636ffdc5af75678812bdf4eb99feed1bbf131[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Thu Dec 7 15:08:05 2023 -0800
+
+    CI: Bump timeout from 3h to 4h. shmem-tests cause debug test runs to take longer.
+    
+    After addition of new large_inserts_stress_test, being done as part of
+    PR #569 (free/memory mgmt support for shared memory), CI-debug jobs
+    are timing out at current timeout=3h.
+    
+    Bump this timeout limit to 4h, to see if test-jobs complete.
+
+[33mcommit c169d5e05c1e2157ab83407329c1f7d964305dfb[m
+Author: Gabe Rosenhouse <grosenhouse@vmware.com>
+Date:   Mon Nov 20 15:51:24 2023 -0800
+
+    Another fix for an old CI problem (#602)
+    
+    This field is documented as optional and defaulting to "latest" [0]
+    but for some reason, setting it explicitly seems to matter [1].
+    
+    [0]: https://github.com/concourse/registry-image-resource#source-configuration
+    [1]: https://vmware.slack.com/archives/CEUC18KQA/p1689754476227109?thread_ts=1689753436.440569&cid=CEUC18KQA
+
+[33mcommit c64f68d4260ce857d018dd281b9b762af0d343c5[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Mon Oct 10 15:22:07 2022 -0700
+
+    Support for multi-process execution, with processes using shared memory
+    
+    This commit extends core shared memory support to now allow for
+    a multi-process execution model, where multiple processes can now
+    attach to Splinter shared memory. Core thread-specific concurrency
+    primitives are modified, slightly, to now also support a
+    multi-process execution model.
+    
+    - This commit sets up the stage to support fork()'ed or other OS-processes
+      running with --use-shmem option, where each process will [in future]
+      masquerade as a Splinter thread. A core change needed to move to that
+      execution model is to support thread-specific IO-context structures.
+      Otherwise, if an/other OS-process tries to do IO using AIO-context
+      established by the main thread (i.e. by the process that started up
+      SplinterDB), we will immediately run into hard IO-system call errors.
+    
+    This commit:
+       - Performs an io_setup() for each thread / process
+       - Manages this AIO-context tightly bound to Splinter's thread context
+       - Does required book-keeping to keep this IO-context state kosher
+         in conjunction with thread registration / de-registration.
+       - Updates existing io_apis_test to deal with thread-specific IO
+         context handles.
+    
+       An alternative could be localize this change-in-behaviour (of setting
+       up thread-specific IO-context structs) only when the process-model of
+       execution comes around. That execution model requires configuring
+       SplinterDB with shared-memory support. But, just by looking at
+       --use-shmem (or corresponding config setting), we cannot be sure that
+       the process-model will be used or if we are just re-running rest of
+       the test suites with shared-segment enabled. So, without trying to
+       further complicate this choice-making, with this commit we will always
+       set up thread-specific AIO-context structures.
+    
+    Collection of lower-level changes to move to this execution model:
+    
+     - platform_buffer_init() that mmap()s' memory for the buffer cache
+       will now use MAP_SHARED (v/s MAP_PRIVATE).
+       The issue is that some parts of structures, e.g. buffer cache, are
+       allocated using mmap(). The flags for this were MAP_PRIVATE, which
+       means this memory is only accessible to the main process that set up
+       Splinter. All child threads work on a COW-version of this mapped
+       memory.
+       So the changes done by the child process to the BTree in the buffer
+       cache are not visible to the parent process.
+    
+     - Convert synchronization primitives to be shared across processes.
+    
+       This commit reworks core synchronization APIs to use interfaces
+       that allow the sync-hook across child processes. This affects:
+    
+         - platform_mutex_init()
+         - platform_spinlock_init()
+         - platform_condvar_init()
+         - platform_semaphore_init()
+         - Add corresponding API-exerciser unit-tests for sanity coverage
+    
+     - Now that we have thread-specific IO-context setup, as part of
+       thread register / deregister, we now also do io_register_thread(),
+       io_deregister_thread(). This is basically book-keeping state of
+       the thread w.r.t IO setup & context.
+    
+    Testing changes added:
+    
+      - Support --fork-child to test execution options. Some new tests
+        will honor this argument, and will exercise activity using
+        a forked-process execution model.
+    
+      - New test splinterdb_forked_child_test added: This covers the
+        cases to show that IO errors could be repro'ed when running Splinter
+        activity from a forked child process. Many other cases are added
+        to this framework to exercise different cases of forked process
+        doing SplinterDB activity. Much code/dev stabilization was achieved
+        through this single new test.
+    
+      - Add case test_seq_key_seq_values_inserts_forked to large_inserts_stress
+        test.
+    
+      - Existing functional io_apis_test to run with --fork-child option,
+        thereby creating the scenario(s) of forked processes exercising
+        the basic IO APIs.
+    
+      - Add new & extended tests to test.sh, for extended coverage using
+        shared-memory and multi-process execution.
+    
+      - Add support for --wait-for-gdb and wait_for_gdb_hook() function.
+    
+        To debug forked child processes, add support for new command-line
+        flag: --wait-for-gdb . And add a looping function where we can
+        set a breakpoint, wait_for_gdb_hook(). Use this facility in
+        splinterdb_forked_child_test.c, which has helped debug errors
+        seen while running test_multiple_forked_process_doing_IOs().
+    
+    Changes arising from review comments: Mostly cleanup:
+    
+     - splinterdb.c: Redefine testing-accessor methods to return correct
+       <data type> *, rather than void *
+    
+     - platform.c: Clean-up error handling in platform_condvar_init(),
+       using goto labels. Add missing pthread_mutex_destroy() in one case.
+    
+     - platform_shmcreate() will now return heap-ID as start address of
+       allocated shared segment. Adjust platform_heap_id_to_shmaddr()
+       appropriately.
+    
+     - rename tests/splinterdb_test_apis.h -> src/splinterdb_tests_private.h
+    
+     - Rename test config 'num-forked-processes' -> 'num-processes'.
+       Adjust tests accordingly.
+
+[33mcommit 42799b1dbec4abdeae38c5e0f654ea233efcc2c6[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Mon Sep 26 09:45:25 2022 -0700
+
+    Core changes to support running Splinter with allocated shared memory.
+    
+    Support to run SplinterDB with shared memory configured for most
+    memory allocation is an -EXPERIMENTAL- feature added with this commit.
+    
+    This commit brings in basic support to create a shared memory segment and
+    to redirect all memory allocation primitives to shared memory. Currently,
+    we only support a simplistic memory mgmt; i.e. only-allocs, and a very
+    simplistic handling of free() of the very last memory piece allocated.
+    With shared segments of 1-2 GiB we can run all functional and unit tests.
+    
+    The high-points of the changes are:
+    
+    - External configuration: splinterdb_config{} gains a few new visible
+      fields to configure and troubleshoot shared memory configuration.
+       - Boolean: use_shmem: Default is OFF
+       - size_t : shmem_size:
+    
+    - The main driving change is the re-deployment of platform_heap_id 'hid'
+      arg that appears in all memory-related interfaces. If Splinter is
+      configured for shared memory use, 'hid' will be an opaque handle to
+      the shared segment. Most memory allocation will be redirected to new
+      shmem-based alloc() / free() interfaces.
+    
+    - Formalize usages of PROCESS_PRIVATE_HEAP_ID: A small number of clients
+      that wish to repeatedly allocate large chunks of memory tend to cause
+      OOMs. The memory allocated by these clients is not shared across threads
+      / processes. For such usages, introduce PROCESS_PRIVATE_HEAP_ID as an
+      alias to NULL, defaulting to allocating memory from the heap.
+    
+    - Manage handling of heap-ID to platform_get_heap_id() to correctly
+      return the handle to shared memory. (Otherwise, it would return
+      NULL by default.)
+    
+    - BTree pack allocates large fingerprint-array. This also causes large
+      tests to run into OOMs. For threaded execution, it's ok if the memory
+      for this array is allocated from the heap. But for multi-process
+      execution, when one process (thread) allocates this finger print
+      array, another thread may pick up the task to compact a bundle and
+      will try to free this memory.
+    
+      So, this memory has to come from shared memory. To cope with such
+      repeated allocations of large chunks of memory to build fingerprint,
+      a small scheme for recycling such "free"-large-memory chunks scheme
+      is supported by shmem module.
+    
+      Applied this technique to recycle memory allocated for iterators also.
+      They tend to be big'gish, so can also cause shmem-OOMs.
+    
+    - All existing functional and unit-tests have been enhanced to now
+      support "--use-shmem" argument. This will create Splinter with
+      shared memory configured, and tests are run in this mode.
+    
+      This change brings-in quite a good coverage of existing testing for
+      this new feature.
+    
+       - New test: large_inserts_bugs_stress_test -- added to cover the
+         primary use-case of concurrent insert performance benchmarking
+         (that this feature is driving in prior integration effort).
+    
+       - test.sh enhanced to run different classes of test with the
+         "--use-shmem" option.
+    
+    - Diagnostis & Troubleshooting:
+    
+       - Shmem-based alloc/free interfaces extended to print name of object
+         and other call-site info, to better pinpoint source code-flow
+         leading to memory issues.
+    
+       - Add shared memory usage metrics, including for large-fragment
+         handling.  Report summary-line of metrics when Splinter is shutdown.
+         Print stats on close.
+    
+       - Add various utility diagnostic helper methods to validate that
+         addresses within shared memory are valid. Unit-tests and some asserts
+         use these.
+    
+    - minor #include cleanups
+    
+    Changes arising through review cycle and stabilization v/s /main:
+    
+    - In test.sh/run_slower_unit_tests(), re-enable execution of
+      large_inserts_bugs_stress_test, but bracketted under "set +e" / "set -e"
+      settings. If this test fails in CI (as it does randomly), hopefully,
+      this SET toggling will allow the rest of the script to still run. CI job
+      should not fail immediately.
+      (Some deeper stabilization is needed for these test cases.)
+    
+    - Purged the heap_handle * in shmem.h/.c module and through the rest
+      of the Splinter code. Only heap-ID is a valid handle anymore.
+    
+    - Fix race condition bug in platform_shm_alloc()
+    
+    - Added Micro-optimization to recycle last-allocated frag being freed.
+    
+    - Add config_parse_use_shmem() as parsing interface to see if
+      "--use-shmem" was supplied. Apply to many unit-/functional-tests.
+    
+    Rework unit-tests to use config_parse_use_shmem() to support --use-shmem parsing.
+    
+    Re-enable large_inserts_bugs_stress_test execution.
+
+[33mcommit 2fb4d7c9b059f32814effb93f59199ef9fa484ac[m
+Author: Deukyeon Hwang <deukyeon@users.noreply.github.com>
+Date:   Tue Aug 15 17:19:03 2023 -0700
+
+    Fix the compile error on platform_open_log_file() (#596)
+
+[33mcommit 4679bb77769fba297c048851d52213d0b00ad556[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Tue Aug 15 16:15:54 2023 -0700
+
+    remove btree rough count stuff, since it is unused (#594)
+
+[33mcommit 3bf70237684b4a5ee5d5ada0f8cd88e174165cd5[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Wed Jul 26 18:53:26 2023 -0700
+
+    Bidirectional Iterators (#588)
+    
+    * tweak iterator api to make it easier to add bidirectionality
+    
+    * debugging btree reverse iteration
+    
+    * reduce time we hold locks during btree_split_child_leaf
+    
+    * further refine the locking in btree node splits and fix reverse iterator bug
+    
+    * btree iterator init at key other than min and add btree_iterator_seek
+    
+    * splinterdb_iterator_prev implmentated and working
+    
+    * clang formatting
+    
+    * improve the trunk iterator logic
+    
+    * corrections for pull request
+    
+    * more pull request fixes
+    
+    * assert fix
+    
+    * more pull request feedback
+    
+    * iterator stress test, bug fixes, formatting
+    
+    * final bit of pr feedback
+    
+    * formatting
+    
+    ---------
+    
+    Co-authored-by: Evan West <evan.ts.west@gmail.com>
+
+[33mcommit 950df20e162dcf91f0ce64a0908610c4940cdab1[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Tue Jul 25 16:27:33 2023 -0700
+
+    allow merge callbacks to be NULL (#577)
+    
+    In that case, splinterdb_update() is not supported.
+
+[33mcommit a7547cdec4f740e78258428d3ab56a68ce1885da[m
+Author: deukyeon <deukyeon@users.noreply.github.com>
+Date:   Tue Jul 25 15:15:05 2023 -0700
+
+    (#580) Cleanup some bool stuff (#584)
+    
+    * Add the header file for _Bool
+    
+    * converting bool to bool32
+    
+    * move stdbool include
+    
+    ---------
+    
+    Co-authored-by: Rob Johnson <rob@robjohnson.io>
+
+[33mcommit a3e9469cb2de68a411222bb04de0dbb8079324d2[m
+Author: deukyeon <deukyeon@users.noreply.github.com>
+Date:   Mon Jul 24 18:02:50 2023 -0700
+
+    Set the addresses of log for super block if it is. (#582)
+    
+    Co-authored-by: Alex Conway <aconway@vmware.com>
+
+[33mcommit 3cec3423dd13f690c2705439c6a56cae1ee4c798[m
+Author: Gabe Rosenhouse <grosenhouse@vmware.com>
+Date:   Mon Jul 24 17:12:20 2023 -0700
+
+    CI fix: use new version of registry-image resource (#593)
+
+[33mcommit d2e8369937c6468a9ef7cf02256750842377c74e[m
+Author: Evan West <evan.ts.west@gmail.com>
+Date:   Thu Jul 13 20:22:03 2023 +0000
+
+    fix formatting in trunk.c
+
+[33mcommit fad27b5ebf282af6006c3fcf3173d38c2aced2df[m
+Author: Evan West <evan.ts.west@gmail.com>
+Date:   Fri Jul 7 18:38:55 2023 +0000
+
+    remove local_max_key and fix filter assertion
+
+[33mcommit b6dafdf9b8c78241c9791a658ffaaa4f265d0b98[m
+Author: Gabe Rosenhouse <grosenhouse@vmware.com>
+Date:   Mon Jun 26 11:13:59 2023 -0700
+
+    CI: switch PR resource to maintained one (#587)
+
+[33mcommit 6a2348c0eb9887cdafee3dad674a96e41edddb28[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Sun Apr 30 13:04:41 2023 -0700
+
+    Robj/memtable race fix (#574)
+    
+    * Memtable Generation Bugfix
+    
+    Fixes a bug where memtable_maybe_rotate_and_get_insert_lock would
+    speculatively increment the memtable generation even when the next
+    memtable was not yet ready. This would cause concurrent lookup threads
+    to attempt to access that memtable, resulting in errors.
+    
+    This fix requires the insert threads to wait until the next memtable is
+    ready before finalizing the current one.
+    
+    * abstract memtable and trunk root-addr locking apis
+    
+    ---------
+    
+    Co-authored-by: Alex Conway <aconway@vmware.com>
+
+[33mcommit 8c639a0f4862923361fee8b845a9b18775064e19[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Mon Apr 24 21:47:01 2023 -0700
+
+    fix next_req node-split bug in trunk (#575)
+
+[33mcommit 1e8f7901526611e6292c1a61d9e542727215cfdc[m
+Author: deukyeon <deukyeon@users.noreply.github.com>
+Date:   Mon Apr 24 19:36:07 2023 -0700
+
+    (#546) Fix the segmentation fault after splinterdb_stats_reset() (#547)
+    
+    Previously, when trunk_stats_reset() was called by
+    splinterdb_stats_reset(), the entire statistics of a trunk, including
+    the histogram handles, were reset to zero.
+
+[33mcommit fa990cf0c386c48f7e1b1039e5615a467012cd00[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Tue Dec 20 21:19:00 2022 +0000
+
+    Copy-on-Write Trunk
+    
+    This changeset implements copy-on-write for trunk nodes, which includes
+    several high-level changes. This PR still needs to be rebased onto main,
+    but the the purpose is to discuss high- and low-level design decisions.
+    
+    Changes in this PR:
+    
+    Trunk root lock. A distributed RW lock is used to access/change the
+    current root.
+    
+    Flush from root. Flushes proceed from the root and cascade immediately
+    rather than being triggered at the beginning of trunk_compact_bundle.
+    
+    Copy-on-write. Trunk nodes cannot be modified directly, and instead are
+    change via a copy-on-write of the root-to-node path together with a
+    change of the root node.
+    
+    Garbage Collection for unlinked branches and filters. After a
+    copy-on-write, the nodes on the old path will be unreferenced. This PR
+    does not GC the trunk nodes themselves, but it includes a GC path to
+    dereference the replaced branches and filters.
+    
+    platform_batch_rwlock. Replaces distributed locks using dummy cache
+    pages with a batched distributed RW lock implementation in
+    platform.[ch].
+
+[33mcommit b5a283b304a0a51f026737360e90cd29f641fd26[m
+Author: Gabe Rosenhouse <grosenhouse@vmware.com>
+Date:   Sat Apr 22 20:10:34 2023 -0700
+
+    Update CONTRIBUTING.md to describe ok-to-test PR label (#573)
+
+[33mcommit d991bacae6a1a5f6ef6879a8eb5ef43bcd1f6472[m
+Author: Gabe Rosenhouse <grosenhouse@vmware.com>
+Date:   Thu Apr 20 14:25:56 2023 -0700
+
+    CI requires an "ok-to-test" label before running PRs (#572)
+
+[33mcommit 77ab353bcc84773d92b3e1dedb1ac7891988ba46[m
+Author: gapisback <89874928+gapisback@users.noreply.github.com>
+Date:   Thu Apr 20 14:12:23 2023 -0700
+
+    CI: Bump timeout from 2h to 3h. shmem-tests cause debug test runs to take longer. (#566)
+    
+    In-flight stabilization of shared memory support in Splinter is bringin
+    along with tons more additional tests. We are effetively running most
+    of the existing twice; once w/o and once w/ shared memory configured.
+    Debug-build test runs are timing out at 2 hours. Bump timeout to 3hs,
+    and once stabilized, we can look into dropping this to 2h.
+
+[33mcommit b2245ac5237a0df633757eae3eabaa9c4bef627b[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Wed Apr 5 16:29:13 2023 -0700
+
+    Fix bug in output formatted by size_to_str() helper.
+    
+    Fractional portion of value formatted by size_to_str() was
+    incorrect. We were losing the scale for things which were
+    supposed to be "xx.07", we were reporting "xx.7", which is
+    incorrect.
+
+[33mcommit 8a04854f120235f365df2bd62e5bce95ac09911b[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Mon Mar 20 15:26:29 2023 -0700
+
+    (#548) Use _Bool for boolean fields in external config struct.
+    
+    In SplinterDB's public splinterdb_config{} config, we have few fields
+    defined as 'bool' which is typedef'ed to int32 on our side. This creates
+    compatibility problems when linking this library with other s/w
+    which may have defined 'bool' as 1-byte field. (Offsets of fields in
+    the splinterdb_config{} struct following 1st field defined as 'bool'
+    changes across dot-oh's.) This commit slightly adjusts the typedefs of
+    boolean fields in external structs to now use _Bool. This should reduce
+    the risk of such incompatibilities.
+    
+    Change return type of methods in public_util.h to _Bool .
+    
+    Relocate typedef int32 bool to private platform_linux/platform.h so it's
+    used only on Splinter-side.
+    
+    Cleaned-up few instances around use of bool type for code hygiene:
+    
+     - Minor adjustment to routing_filter_is_value_found() returning bool.
+     - Stray references to use of 0/1 for boolean values with FALSE/TRUE.
+
+[33mcommit f3c92ef6cc61ac1157427167838a6dba2c4f53f0[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Tue Apr 4 15:51:05 2023 -0700
+
+    (#561) Fix bug in routing_filter_prefetch(), causing assertion to trip.
+    
+    This commit fixes a simple arithmetic error in routing_filter_prefetch()
+    while computing next page's address. The bug results in a debug-assert
+    in clockcache_get_internal(), or an unending hang in clockcache_get()
+    code-flow using release binary.
+    
+    A new test case test_issue_458_mini_destroy_unused_debug_assert has been
+    added which reproduces the problem. However, this case still runs into
+    another failure (being tracked separately), so this case is currently
+    being skipped.
+
+[33mcommit 89f09b3716b01a4845eddf73e7515b37c3100346[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Wed Mar 22 20:22:05 2023 -0700
+
+    CI: use gcc for ASAN jobs
+
+[33mcommit 9037ebedd956c40ca5314607746f3789ad282ff9[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Wed Mar 22 10:54:35 2023 -0700
+
+    (#554) Fixes to get couple of tests running cleanly in ASAN-builds
+    
+    This commit fixes minor errors in 2 tests (io_apis_test, filter_test)
+    to get them running cleanly in ASAN-builds.
+
+[33mcommit ea7203a4c8a709189f59cdfa501969f9014f44c3[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Wed Mar 22 14:25:29 2023 -0700
+
+    (#554) Enhance test.sh to run a sub-set of tests named by their driving function.
+    
+    This commit now allows running as "test.sh <fn-name>" interface, where
+    the name of the driving function executing a batch of tests can be
+    run independently, without having to go through full execution of all
+    tests. This helps developers shorten their fix-dev-test cycle, especially
+    when validating quick-fixes for long-running tests, like ASAN / MSAN builds.
+
+[33mcommit a5c821cf69b41d54e8eee948d497d76f2cf78ab4[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Tue Mar 21 11:00:01 2023 -0700
+
+    CI: temporarily cover the shmem branch
+    
+    revert this once it merges
+
+[33mcommit 5dd75355979653bd2d7877c5e01a64ff33d09cb9[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Tue Mar 21 10:54:58 2023 -0700
+
+    CI: run msan and asan tests on all PRs
+
+[33mcommit 98f5ca11760bf9cb19e481a705ad12761b2796b3[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Tue Mar 21 10:59:29 2023 -0700
+
+    CI: fixup for multi-branch work
+
+[33mcommit 6be046128ff717e8e16d7b07f1755e7a9f438b3f[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Mon Mar 20 15:16:00 2023 -0700
+
+    CI: refactor config to enable coverage of multiple branches
+
+[33mcommit d9fcc40725c45fed7fc06dac305423292478836f[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Mon Jan 9 17:55:52 2023 -0800
+
+    Identify Memtable v/s Branch page types via BTree-print routines.
+    
+    This commit extends BTree-print routines to also report the page
+    type, whether it's a branch or a memtable BTree. As the structures and
+    print methods are shared between two objects, this extra information
+    will help in diagnostics. Trunk nodes are likewise identified.
+    Extend btree_print_tree() to receive page_type arg.
+    Minor fix in trunk_print_pivots() to align outputs for pivot key's string.
+
+[33mcommit 2ea30f40fea25483353bcbe047692ae1e65d32bd[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Fri Jan 6 12:54:11 2023 -0800
+
+    (#500) Move hook-related global vars to task_system{} struct.
+    
+    This commit removes the dependency of task system structures on global
+    variables declared in task.c . The hook-related variables are now
+    moved as members of the task_system{} struct. This removes accessing
+    potentially stale values when task-system is destroyed and re-created.
+    Also, TASK_MAX_HOOKS is now decreased from 8 to 4. This change largely
+    has no functional impact, and is mostly a test-stabilization fix.
+
+[33mcommit 4b6e0b1c4f74ad43d46bb05445d7aa8272a7e8f6[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Mon Feb 6 17:18:13 2023 -0800
+
+    Add initial support for message logging levels, used in unit-tests
+    
+    This commit does some clean-up and normalizes the behaviour of
+    interfaces to control outputs from C-unit tests. The main goal
+    is to reduce voluminous output generated by few unit-tests that
+    exercise print diagnostic code (which otherwise crashes browsers
+    when viewing test-run outputs in CI). An additional benefit of this
+    rework is that we now have a way to run unit-tests to see output
+    generated at different verbosity levels.
+    
+    - By default, unit test execution remains silent and only error messags
+      will be printed. ctests' main() takes care of setting this up.
+    - set_log_streams_for_tests() becomes the single-interface that unit
+      test code has to invoke, when needed to change the test output's
+      verbosity level.
+    - Small collection of MSG_LEVEL_ levels added to ctest.h
+    
+    Test execution examples: Run with env-var to see diff outputs:
+      VERBOSE=0 (or unset env-var): Default; silent output
+      VERBOSE=3 : See error messages
+      VERBOSE=6 : See info and error messages
+      VERBOSE=7 : See all messages; mainly intended to collect debug output
+
+[33mcommit 1f09113f9206ec3430d1dbbe441a837a183e80f1[m
+Author: gapisback <89874928+gapisback@users.noreply.github.com>
+Date:   Thu Jan 19 13:42:32 2023 -0800
+
+    Fix-up indentation of multi-line comments to conform to coding standards. (#535)
+    
+    This commit fixes up several comments in btree.c to conform to the
+    style we have followed elsewhere for multi-line comments. No code
+    logic changes are done with this commit.
+
+[33mcommit caeaeb1c51cfcc88c55c12565fcad44303e5a58a[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Fri Dec 23 10:26:27 2022 -0800
+
+    (#513) Add set_log_streams_for_*() fns to manage unit-test outputs.
+    
+    This commit refactors existing chunks of code that exists in different unit-
+    test sources to manage output file handles to a common function. This is
+    defined in new file unit/unit_tests_common.c ; set_log_streams_for_tests()
+    Tests that check error-raising behaviour will now need to call
+    set_log_streams_for_error_tests(), to manage output streams.
+    
+    Minor correction to TEST_DB_NAME; change it to conform to the r.e. defined
+    in .gitignore to suppress listing this in 'git status' output.
+
+[33mcommit 7e85a29a8d6ec2bc548c2f66669d41e8c91fb99b[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Thu Dec 22 10:44:04 2022 -0800
+
+    (#511) Add fns to print 'size' as human-readable string w/ unit-specifiers
+    
+    This commit adds couple of utility functions to snprintf(), in an output
+    buffer, the 'size' unit to a human-readable string with unit-specifiers.
+    
+    - size_to_str() - Convert 'size' to a string in an output buffer
+    - size_to_fmtstr() - Same as above, using user-specified format-string.
+       Useful to generate output enclosed in, e.g., '(%s)'.
+    - Add size_str(), size_fmstr() caller-macros to simplify calling these
+      formatting functions. These macros declare on-stack buffers used to
+      format the output string. size_str() provided by Rob Johnson, to greatly
+      simplify the usage.
+    
+    Add utility bytes-to-Units conversion macros. Add unit tests to exercise
+    these interfaces. Apply these utility fns in couple of stats-printing
+    and BTree print-methods, to display size values as human-friendly unit
+    specifiers.
+
+[33mcommit 84484df8156b5e352562c813711e529d722ae7f3[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Fri Jan 6 10:47:16 2023 -0800
+
+    (#499) Minor cleanup of INVALID_TID, and MAX_THREADS in task-system
+    
+    This commit applies some minor clean-up to task system as a follow-on
+    to the larger rework done under PR #497. Consistently use STATUS_BUSY,
+    as a way to report when all concurrent threads are in-use. Minor
+    changes are done to task system unit-test code & cleanup of comments.
+
+[33mcommit 60c7910a0401984a4af553ba57d8a018a186d8e2[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Wed Dec 21 16:32:08 2022 -0800
+
+    (#507) Rework of platform_buffer_create()/destroy() to init/deinit() interfaces.
+    
+    This commit reworks the buffer_handle{} interfaces to now become
+    platform_buffer_init() and platform_buffer_deinit().
+    
+    Structures that need a buffer_handle{}, declare a nested sub-struct,
+    which will go through this init / deinit interface to allocate / free
+    memory using existing mmap() interfaces. This removes the need for
+    an input 'heap_id / heap_handle' arg to allocate and free memory.
+    This change does not functionally change anything in these methods.
+    Added small unit-test, platform_apis_test, to exercise these changes.
+    Cleanup structures and fns that used to take 'heap_handle *' which
+    now become unused with this rework. Tighten up backout / error handling
+    in clockcache_init() and deinit() code-flow.
+    
+    Co-authored by Rob Johnson, who reworked the entire interfaces as
+    implemented above, to remove the dependency on 'hid' argument.
+
+[33mcommit 4fef244a90b717800e8c9e7124cc175b17d7fcbb[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Wed Dec 21 18:17:17 2022 -0800
+
+    (#509) Fix off-by-1 issues re. MAX_THREADS in clockcache.c
+    
+    This commit fixes off-by-1 issues when checking MAX_THREADS
+    value in assertions in clockcache.c . These problems are easily
+    reproduced with driver_test splinter_test with max # of
+    threads. A new test execution with --num-insert-threads 63
+    is added to nightly runs, in test.sh .
+
+[33mcommit 615050a2b95313e8a44f81f8cd6168d7590e38f4[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Mon Jan 2 09:08:20 2023 -0800
+
+    (#290) Replace use of 'find', 'grep' with Makefile built-in 'wildcard' etc.
+    
+    This commit replaces all uses of shell 'find', 'grep' commands
+    in Makefile with built-ins such as 'wildcard', 'filter-out' etc.
+    Add user-defined 'rwildcard' function to replace 'find' which wants
+    to search thru sub-dirs. Apply 'rwildcard' wherever possible to
+    allow for the possibility that we may grow source sub-dirs in future.
+    This removes any potential dependency on shell commands for 'make'
+    invocations. A small change is to list the unit-test sources in
+    lex-sorted order when linking them into the unit_test binary.
+
+[33mcommit 2b4ecf0948caaf28694a00d5bb4e6400b3b51a1e[m
+Author: Jon Howell <jonhnet@users.noreply.github.com>
+Date:   Fri Jan 6 14:40:35 2023 -0800
+
+    Rename extent_discard (from hard_evict_extent) (#526)
+    
+    * rename cache_claim to cache_try_claim
+    
+    * format fixall
+    
+    * rename extent_discard from hard_evict_extent
+    
+    Co-authored-by: Jon Howell <howell@vmware.com>
+
+[33mcommit 864c31af696f1478a3f6ca98f4e3aa0789afbc76[m
+Author: Jon Howell <jonhnet@users.noreply.github.com>
+Date:   Fri Jan 6 13:24:37 2023 -0800
+
+    rename cache_try_claim (from cache_claim) (#525)
+    
+    * rename cache_claim to cache_try_claim
+    
+    * format fixall
+    
+    Co-authored-by: Jon Howell <howell@vmware.com>
+
+[33mcommit 77e2883eeca4f2ac839e8d5fbb2bdda7320b279e[m
+Author: Jon Howell <jonhnet@users.noreply.github.com>
+Date:   Fri Jan 6 12:24:48 2023 -0800
+
+    Move abstract base implementation into allocator.c (#519)
+    
+    Co-authored-by: Jon Howell <howell@vmware.com>
+
+[33mcommit d45335e7b27ae17f76e521d167cf755a32e42e44[m
+Author: Jon Howell <jonhnet@users.noreply.github.com>
+Date:   Fri Jan 6 09:42:11 2023 -0800
+
+    Rename allocator_get_ref to _get_refcount (#518)
+    
+    Co-authored-by: Jon Howell <howell@vmware.com>
+
+[33mcommit 10cc793880f730cbe4c0a0de81561b47d85b8286[m
+Author: Jon Howell <jonhnet@users.noreply.github.com>
+Date:   Thu Jan 5 23:38:14 2023 -0800
+
+    Document cache.h interfaces based on clockcache comments. (#502)
+    
+    * Document cache.h interfaces based on clockcache comments. Document boilerplate in clockcache.c
+    
+    * clang-format fix
+    
+    * explain addressing scheme
+    
+    * improve some docs with robj looking over shoulder
+    
+    * tighten up remaining XXX
+    
+    * updates per aconway's PR feedback
+    
+    Co-authored-by: Jon Howell <howell@vmware.com>
+
+[33mcommit 66c0e518f7b90ebf65314c240b7779609893d3eb[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Fri Dec 30 12:19:20 2022 -0800
+
+    (#342) Fix checks in trunk_config_init() to report correct arg-values.
+    
+    This commit does a minor cleanup in trunk_config_init() to correctly
+    report the value for 'Maximum key size' reported when the checks
+    fail for an invalid configuration. We were overflowing the value
+    for an uint64 variable, leading to bogus values reported in the error.
+    Changed this function and other helper functions in test-code that parse
+    command-line arguments to return platform_status. Adjust the handling
+    of this failed return-value in diff test code. Add new unit-test to
+    verify that invalid config params correctly fail to init the trunk-config.
+
+[33mcommit 081e8a0b61a70090431c19016b06e20a14cc9d5c[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Mon Dec 26 09:37:49 2022 -0800
+
+    (#520) Refactor few BTree print code chunks into sub-functions.
+    
+    This commit adds following stand-alone fns to print diff BTree sub-structs:
+    
+    - btree_print_btree_pivot_stats()
+    - btree_print_btree_pivot_data()
+    - btree_print_index_entry()
+    - btree_print_leaf_entry()
+    
+    Existing print code inline in other methods is pulled-out into above
+    functions to facilitate code-reuse and the ability to call from the debugger.
+    No changes are done to existing functionality of print methods.
+
+[33mcommit 20a926d2f2d53dba4b32d57af557f9581650e9aa[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Thu Jan 5 17:19:10 2023 -0800
+
+    Robj/task system config (#497)
+    
+    * add a task_system_config and plumb it through the tests
+    * allow using bg and fg threads at the same time
+    * make all possible task configs valid
+    * fix task shutdown race
+    * rename platform_sleep to platform_sleep_ns
+    * cleanup redundant code in task.c
+
+[33mcommit bcd7933f4c50c742de0c57e93464c9ffa9dc1a64[m
+Author: Jon Howell <jonhnet@users.noreply.github.com>
+Date:   Sat Dec 24 08:17:19 2022 -0800
+
+    Jonh move extent funcs to allocator (#504)
+    
+    * progress before sed
+    
+    * complete call site fixes
+    
+    * format fixall
+    
+    * format fixall
+    
+    Co-authored-by: Jon Howell <howell@vmware.com>
+
+[33mcommit f070c377118063dc5e77839daf4e286fed9232b1[m
+Author: gapisback <89874928+gapisback@users.noreply.github.com>
+Date:   Wed Dec 21 16:26:27 2022 -0800
+
+    (#456) Add io_apis_test IO exerciser. Minor cleanup of laio.c (#473)
+    
+    This commit adds a new 'io_apis_test' target under functional
+    driver_test. This new test exercises sync IO APIs and async
+    reads APIs, as a way to do minimal validation of the IO sub-system
+    and its APIs. Minor code & comment cleanup is done in laio.c
+    to improve readability and understanding of this module.
+    Few existing error & assertion messages reporting IO errors
+    are enhanced to report more diagnostic data that lead to said errors.
+    Most of these are around I/O calls and seen while opening a SplinterDB
+    device.
+    
+    No new functional changes are introduced with this commit.
+
+[33mcommit 5e8ec1be3a643d6d9895d894be6b9bc0964eb73c[m
+Author: gapisback <89874928+gapisback@users.noreply.github.com>
+Date:   Wed Dec 21 13:02:08 2022 -0800
+
+    (#468) Enable use of background threads in Splinter. Engage tests to exercise bg-threads. (#469)
+    
+    This commit exercises use of background threads, a feature that
+    has been implemented but hadn't been fully tested & engaged. What started
+    off as a 'feature enablement' effort resulted in following changes, many
+    arising during review discussions:
+    
+    - Externalize num_normal_bg_threads and num_memtable_bg_threads as new
+      fields in splinter_config{}. A requirement is that both have to be
+      non-zero for task-system to successfully come up w/ bg-threads enabled.
+    
+    - Minor adjustments are done to task system initialization to
+      manage the order in which background threads are started up.
+    
+    - Tightened some checks while task-system is bootstrapped and while
+      threads are created to ensure that we don't overrun limit of MAX_THREADS
+      that can be concurrently started, including thread-0 for the main program.
+      Attempt to start a thread beyond this limit will fail with
+      STATUS_BUSY ('Resource temporarily unavailable') error.
+    
+    - Added new cases in task_system_test to verify the new variation that
+      the task system test case could, optionally, be exercised with
+      --num-bg-threads | --num-memtable-bg-threads arguments.
+    
+    - Enhanced config_parse() to recognize these two new options.
+      Added a case to test.sh to exercise the task_system_test with background
+      threads. This change now sets us up to invoke other functional tests enabled
+      with bg-threads. That change to test.sh can be added in the future.
+    
+    - Add several new unit-tests exercising this capability and added couple of
+      calls to test.sh to exercise some functional tests with bg-threads.
+
+[33mcommit 46bac943c5f3029ef83bb248de4047c1fd0a60f1[m
+Author: Jon Howell <jonhnet@users.noreply.github.com>
+Date:   Tue Dec 20 15:25:58 2022 -0800
+
+    use pragma once in preference to matched ifndef blocks (#503)
+    
+    Co-authored-by: Jon Howell <howell@vmware.com>
+
+[33mcommit 83de5e03722d61436ce247e406d87b8fa4913d85[m
+Author: Gabe Rosenhouse <grosenhouse@vmware.com>
+Date:   Tue Dec 6 14:03:44 2022 -0800
+
+    Simplify output handling in unit tests (#494)
+    
+    - Unit tests respect VERBOSE environment variable,
+      which ensures output goes to stdout/stderr.
+    
+    - When VERBOSE is unset, or set to "0" or "false", then:
+        - stdout will show only 1 status line per test
+        - stderr will be silent, except for error messages
+    
+    - When VERBOSE is set to any other value, then
+      library and unit test info messages go to stdout.
+    
+    - When a unit test fails, the user will see a suggestion
+      to set VERBOSE=1 to see all the detailed output.
+      (TODO: the suggestion doesn't appear on a crash, but that'd be nice)
+    
+    - Library log lines from unit tests no longer go to /tmp/unit_test.std[out,err]
+    
+    - Platform_default_log_handle and Platform_error_log_handle are no
+      longer part of the public API surface.  Applications (and tests
+      that mimic apps) must use platform_set_log_streams() instead.
+    
+    - Cleans up most unit tests to avoid a direct dependency on platform.h:
+      - Removes some references to Platform_*_log_handle globals
+        and instead calls platform_set_log_streams()
+      - Removes some calls to platform_default_log()
+        and instead use a dedicated CTEST_LOG_INFO() macro.
+      - This isn't complete, but is a start
+    
+    - Enable VERBOSE mode when running tests in CI
+    
+    - fixup: move file_error_returns test to limitations test file, since it covers an error condition
+
+[33mcommit 74e03602a98ca71e04e83749637461fd921a96fe[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Thu Dec 1 23:45:27 2022 +0000
+
+    When file open fails, return error code instead of crashing
+    
+    Fixes #482
+
+[33mcommit c6e7c3e22430f205795edf3bcbc2412bda7f153a[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Sun Dec 4 09:00:32 2022 -0800
+
+    Format
+
+[33mcommit 384dbaeea2440c0479bda9ec31db3b4ac97c6d99[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Fri Aug 5 16:57:21 2022 -0700
+
+    Refactor Trunk Node Handles
+    
+    Refactors handling of trunk nodes to a new trunk_node struct, rather
+    than using page_handles. This is now analagous to the handing of
+    btree_nodes.
+    
+    Compiling Successfully
+    
+    Fix a Use-After-Free in Debug Builds and Format
+    
+    Fixes a use-after-free bug where `trunk_node_verify` is called on the
+    child in a debug_assert after a trunk_split_leaf, which ungets the
+    child.
+    
+    Format fix.
+    
+    Fix Minor Bug Introduced in This Commit
+    
+    Reintegrated broken off files
+
+[33mcommit 56465e7571d9ae1f3f7b8dea2dd7d1155e00f2a8[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Sun Dec 4 09:04:30 2022 -0800
+
+    Set default filter index size to 512
+    
+    This was being automatically corrected in the trunk config init and
+    triggering junk messages.
+
+[33mcommit d2e9e8655166e6557172bd73116a1cb1bba57023[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Tue Nov 29 06:52:44 2022 +0000
+
+    Info/error log message updates
+    
+    - Provide function to redirect log streams
+    - Silence informational messages by default
+    - driver_test continues to send them to stdout
+
+[33mcommit 40b785951553eec08aba6a00d66a383ea8769b72[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Tue Nov 29 06:05:49 2022 +0000
+
+    Fixup some log level usages
+    
+    merge: error message goes to error log
+    trunk: common startup log messages are not errors
+    test_functionality: an info message is not an error
+
+[33mcommit 227fde87c5d36d6596bd8ed0dc7979c5510f2af5[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Fri Dec 2 01:14:28 2022 -0800
+
+    tweak example running policy (#490)
+    
+    * tweak example running policy
+    * update make help
+
+[33mcommit 67ee82ddf39a9da275757f9857e3ca071958c820[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Tue Nov 29 13:38:00 2022 -0800
+
+    Fix Default Filter Config and Remove Superfluous Printing
+    
+    Changes the default filter config so that the system doesn't print a
+    warning.
+    
+    Removes allocator, trunk, and task test printing.
+
+[33mcommit 0b16faaae425b55853beaf9c7cf117f5e132819e[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Tue Nov 29 12:27:03 2022 -0800
+
+    README: link to Alex's talk at CMU
+
+[33mcommit a70a0681f2356da810686e2e692b0c1152cab7da[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Tue Nov 29 13:03:59 2022 -0800
+
+    Update CONTRIBUTORS.md (#485)
+    
+    Fixed Vijay's name, which was misspelled
+
+[33mcommit f6415544602a385018e7074720ce53a583b795e4[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Tue Nov 29 13:01:52 2022 -0800
+
+    Add Deukyeon to CONTRIBUTORS (#486)
+
+[33mcommit fc897e4ce3e9c510362905d6d3689d5c38554256[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Tue Nov 22 21:40:42 2022 -0800
+
+    Add variable-sized keys to trunk, eliminate data_config min and max keys and SPLINTERDB_MAX_KEY_SIZE (#464)
+    
+    * convert trunk.c to support variable-sized keys
+    * eliminate MAX_KEY_SIZE and fix bug in btree_test
+    * factor out on-disk key repr from btree into data_internal.h
+    * factor out on-disk tuple repr and convert btree to use it
+
+[33mcommit f0af5709a1a928d960f47879bb49f1c1a594227b[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Tue Nov 22 18:47:07 2022 -0800
+
+    make compaction failures carry on (#477)
+    
+    * make compaction failures in `trunk_compact_bundle` carry on
+    * Also, modifies `trunk_compact_bundle` to deinit its btree_pack_req
+
+[33mcommit 8668423576584b231de7c0d1cb79ffb595c18f6e[m
+Author: gapisback <89874928+gapisback@users.noreply.github.com>
+Date:   Tue Nov 22 15:54:50 2022 -0800
+
+    (#481) Fix missing free for fingerprint array in trunk_compact_bundle() (#483)
+    
+    This commit fixes a missing free for memory allocated to the fingerprint
+    array. The problem was seen to occur in highly concurrent inserts stress
+    workload developed as part of concurrent POC-development and is difficult
+    to reproduce in standalone Splinter.
+    
+    In trunk_compact_bundle(), for a specific code-flow when we found no newly
+    split siblings to replace with a new branch, we release the memory allocated
+    for the trunk_compact_bundle_req{} struct, and exit processing. But the
+    memory allocated (elsewhere, previously) for the fingerprint array hanging
+    off this req struct remains unfreed.
+    
+    This fix was identified through trace diagnostics and code walk through.
+    And has been independently verified to fix this memory leak in the stress
+    workloads that were used to generate this error.
+
+[33mcommit fde3643c37fae39a05401d9bb859d85527d4d5eb[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Wed Nov 16 11:27:44 2022 -0800
+
+    port over mini_allocator assertion fix (#476)
+
+[33mcommit 2292d793fd2357e4bfb375e42799f3d837d70365[m
+Author: gapisback <89874928+gapisback@users.noreply.github.com>
+Date:   Tue Nov 15 11:38:40 2022 -0800
+
+    (#457) Fix missing initialization of rc_allocator_in_use_virtual fn in rc_allocator_ops{} (#470)
+    
+    Minor fix discovered during large inserts-stress test, but the
+    bug is not easily reproducible. Fix verified through code-inspection.
+
+[33mcommit f9b037ad19e1b0a24b54734aaf1d06095430a519[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Sun Nov 13 11:35:59 2022 -0800
+
+    fix several page_type errors and change the test-results Makefile target to behave more like a normal target (#435)
+
+[33mcommit 1bb412c3e774e6584acd0b54801067000ec5fe38[m
+Author: gapisback <89874928+gapisback@users.noreply.github.com>
+Date:   Wed Nov 9 14:27:45 2022 -0800
+
+    (#462) Prepend OS-pid/tid and platform thread-ID to assert message. (#471)
+    
+    To better debug assertion failures, this commit extends the
+    assert message to prepend the OS-pid, OS-tid and thread-ID (index)
+    of the running Splinter thread that encountered the assertion.
+    Couple of existing test cases are mildly amended to cope with
+    these new fields in the assert message printed. Existing
+    debug_assert() also [naturally] gains this functionality as it's
+    a wrapper around platform_assert().
+
+[33mcommit a49f4a7befb5b75851d61f94c82e017183a31172[m
+Author: gapisback <89874928+gapisback@users.noreply.github.com>
+Date:   Tue Nov 8 06:28:59 2022 -0800
+
+    (#463) Fix incorrect usages of heap-ID in BTree unit tests. (#472)
+    
+    This commit cleans up some potentially erroneous usages of
+    platform_heap_id in BTree unit tests. None of these are
+    truly problematic at this time as heap_id is always NULL,
+    so we end up using malloc(). However, these incorrect
+    usages tripped up failures in on-going development which
+    added some memory-tracking instrumentation.
+    
+    These are latent issues which will surface if we ever change
+    heap-memory handling. Verified that these tests still pass
+    MSAN-builds with this fix.
+
+[33mcommit f2cf43540374f743351174e0cc2a1f6e398e6fc0[m
+Author: Gabe Rosenhouse <grosenhouse@vmware.com>
+Date:   Tue Oct 25 14:27:52 2022 -0700
+
+    github: enable blank issues (#466)
+
+[33mcommit c80171c0972b476fc8b0acd14625eb65529e7446[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Wed Oct 19 09:36:22 2022 -0700
+
+    Expose stats in splinterdb layer
+    
+    Adds splinterdb_print_[insertion,lookup]_stats and splinterdb_reset
+    stats to include/splinterdb/splinterdb.h.
+
+[33mcommit 1d94c99150d6cfc8ce407159834739df827ae4b4[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Fri Oct 7 10:27:38 2022 -0700
+
+    Remove compaction byte limits and check for failed compactions (#455)
+    
+    fixes issue 454
+
+[33mcommit 2d927db5a7318e15ad2fb1d11fcd298c19f70e73[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Wed Oct 5 12:06:07 2022 -0700
+
+    Format fix
+
+[33mcommit d40cd65109166b29c3c25c5e67bc3b13f3d60945[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Wed Oct 5 11:45:26 2022 -0700
+
+    Flushing Bug Fix
+    
+    Fixes a bug during flushing where during the flush_fullest loop a split
+    can occur, changing the value of num_children, which is used to trigger
+    the end of the loop. num_children is read before the loop. The fix
+    rechecks num_children each iteration.
+    
+    Cleans up the flush_fullest mechanism to ensure (and assert) that only a
+    non-empty flush can happen.
+
+[33mcommit bda1e46387eb6ac8696366e3ca6787609d98afae[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Thu Sep 29 08:52:48 2022 -0700
+
+    (#448) Clarify logic in task.c; Add unit-tests to validate public interfaces.
+    
+    This commit adds a bit of code cleanup to the task system module, task.c . No new
+    functionality or change-in-logic is being done. Add new unit-test, task_system_test,
+    to validate internal state of the task system for simple task creation / execution.
+    
+    task.c:
+      Reduce MAX_HOOKS from 2K to 8 (should be sufficient)
+      - Various comment cleanup, add fn prologs. Make fns static where possible.
+      - Add various assertions to trip on invalid thread-index, and to trip
+        on incorrect ordering of or multiple calls to register or deregister
+            a thread.
+    
+    task_system_test.c: Exercises both variants of interfaces:
+     - External: task_thread_create(), platform_thread_join()
+     - Internal: platform_thread_create(), platform_thread_join(),
+                 task_register_this_thread(), task_deregister_this_thread()
+    
+    test.sh: Add task_system_test to run as part of run_fast_unit_tests().
+    
+    Added support to trace who's calling register/deregister calls, and to
+    print additional information to pinpoint exactly where-from the call is coming.
+    
+    Add task_system_test to run_fast_unit_tests()
+
+[33mcommit 96558cb6b3954e5ab5af47e0ebe651e17f6d4c0e[m
+Author: gapisback <89874928+gapisback@users.noreply.github.com>
+Date:   Fri Sep 30 12:09:20 2022 -0700
+
+    (#444) Refactor chunks of test.sh into functions for code-reuse (#445)
+    
+    The script test.sh has several inline calls to run different
+    tests. Many of these are interesting cases to be run with
+    an upcoming feature to run Splinter using allocated shared
+    memory segments.
+    
+    This commit rearranges and refactors inline calls to run
+    diff tests into new functions that will now execute a
+    collection of related tests.
+    
+    Examples of new functions added are:
+     - run_fast_unit_tests(), run_slower_unit_tests()
+     - run_splinter_functionality_test(), run_splinter_perf_tests()
+    
+    and so on. No changes are made to the set of tests that will
+    be executed. This refactoring lays down the stage to re-execute
+    relevant set(s) of tests using shared-memory.
+
+[33mcommit 592d86a0ecaa855799593d5cdea5e5202ce80462[m
+Author: gapisback <89874928+gapisback@users.noreply.github.com>
+Date:   Fri Sep 30 11:03:38 2022 -0700
+
+    (#446) Rename couple of memory allocation macros. Add comments; code cleanup. (#447)
+    
+    This commit introduces a small renaming to a couple of memory-allocation
+    caller-macros, and introduces couple of new ones.
+    
+    - Rename: TYPED_MALLOC_MANUAL() -> TYPED_MANUAL_MALLOC(),
+              TYPED_ZALLOC_MANUAL() -> TYPED_MANUAL_ZALLOC()
+    
+    - Add: TYPED_ALIGNED_MALLOC(), TYPED_ALIGNED_ZALLOC()
+    - Replace raw call to platform memory allocation in one instance with
+      use of TYPED_ALIGNED_ZALLOC().
+    - Add comments declaring parameters to various macros, and general
+      improvement of comments related to these macros.
+    
+    No functional changes are introduced.
+    
+    Minor renaming of 'id' to 'hid'
+
+[33mcommit 0759fd48cc4b3df6f1209b4ae782fcd12516de1f[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Fri Sep 9 21:33:28 2022 +0000
+
+    Fix memory leak in verify_tuple
+    
+    Thanks to @mdcallag finding the bug and suggesting this fix.
+
+[33mcommit a1833060823a50042efcf383532724db6627e843[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Thu Sep 1 20:24:12 2022 +0000
+
+    Allow overriding MAX_KEY_SIZE via CFLAGS
+
+[33mcommit a90f666802a2bf727ccdf820d54459b919132355[m
+Author: Gabe Rosenhouse <grosenhouse@vmware.com>
+Date:   Wed Aug 31 17:08:05 2022 -0700
+
+    make install depends on libraries (#437)
+
+[33mcommit 9061729e8998a56fee132ec92d58fe035f8ddb4d[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Wed Aug 24 22:17:22 2022 -0700
+
+    eliminate vestigial task handle from cache (#436)
+
+[33mcommit fd878626710b0886e8fbcb72b417cc53ce2e689c[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Mon Aug 15 18:29:09 2022 +0000
+
+    fix alignment of lookup_result
+
+[33mcommit faafdbb71ff0217b48e278825911a7c975c57924[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Thu Aug 11 22:50:08 2022 +0000
+
+    simplify signature of splinterdb_lookup_result_value
+
+[33mcommit 1688edac87fe4da7e1a3f0e9f8e7346648e259b8[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Thu Aug 11 21:49:17 2022 +0000
+
+    document expectations for lookup_result
+
+[33mcommit 7c31e9b3d7368201b1c6621509595b7e600b6f7d[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Wed Aug 10 21:02:50 2022 +0000
+
+    clarify lifetime of data_config in code comments
+
+[33mcommit cdc18e73a75be2ce1e27edeba6b830e75cb46e80[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Sun Jul 24 23:43:26 2022 -0700
+
+    fix kv_bytes accounting (#430)
+
+[33mcommit 0b0f7a70f9ef223928444673e15f6d54e9cef9e5[m
+Author: Gabe Rosenhouse <grosenhouse@vmware.com>
+Date:   Fri Jul 22 17:04:11 2022 -0700
+
+    ci: run sanitizers with clang (#429)
+    
+    gcc doesn't support msan and its too confusing to mix them
+
+[33mcommit 43a533a4ff44f6b02cd37e7fe6e3d9151ed05a0a[m
+Author: Gabe Rosenhouse <grosenhouse@vmware.com>
+Date:   Fri Jul 22 15:15:42 2022 -0700
+
+    git ignore build dir and db files from example programs (#425)
+
+[33mcommit 08d0f0e33c6fb36eb44ab7dc7feca7eabd7df79f[m
+Author: Gabe Rosenhouse <grosenhouse@vmware.com>
+Date:   Fri Jul 22 11:43:19 2022 -0700
+
+    ci: longer timeouts, move sanitizers to nightly (#427)
+    
+    - sanitizers no longer trigger on pull-requests
+      they only run nightly
+    - extend some timeouts that are being hit
+    - a bit of refactoring of the ytt templates
+
+[33mcommit 3afddd0db70d7c528088ff8e5ce16868043858c1[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Thu Jun 23 15:03:47 2022 -0700
+
+    Rework btree_pack to be completely Merkle-friendly (#418)
+
+[33mcommit af49a77dfa1299ad0e6a604651ef9398d7d4cb41[m
+Author: Carlos Garcia-Alvarado <carlosgarciaalvarado@gmail.com>
+Date:   Wed Jun 15 15:11:57 2022 -0700
+
+    Remove hyphen from website (#422)
+    
+    Co-authored-by: Carlos Garcia-Alvarado <cgarciaalvar@vmware.com>
+
+[33mcommit 5aec241542e7c2ac7c5fc645d6ba89804c2b6277[m
+Author: gapisback <89874928+gapisback@users.noreply.github.com>
+Date:   Thu Jun 9 19:42:22 2022 -0700
+
+    (#252) Set of example C-programs, to demonstrate use of SplinterDB APIs. (#399)
+    
+    This commit adds a small number of sample C-programs, to demonstrate use
+    of SplinterDB core APIs. Associated changes to build this set of stand-alone
+    programs are applied to Makefile. A small new "test-case" is added to
+    test.sh to always execute these programs as part of default testing set.
+    Associated docs files are also updated to direct the user to these programs.
+
+[33mcommit c3e69521b045fb4999f825a3ee77ea82a46be793[m
+Author: gapisback <89874928+gapisback@users.noreply.github.com>
+Date:   Thu Jun 9 17:51:32 2022 -0700
+
+    (#419) Fix bug in splinterdb_iterator_init() when min_key is configured.
+    
+    
+    This commit fixes a latent bug in splinterdb_iterator_init() which might
+    cause splinterdb_iterator_valid() to incorrectly return FALSE when
+    min_key is configured. Add a test case to demonstrate the problem,
+    albeit one that only fails in debug-mode.
+    
+    As a defensive check against test/user-code attempting to add invalid
+    keys, add debug assertion checks in insert code-flow to validate that
+    keys are within the valid [min,max] key-range.
+    
+    (This issue and the consequent bug-fix is rather temporary and may all
+    be dismantled once min/max key configuration is undone.)
+    
+    Address review feedback. Use key_string() for printing, other cleanup.
+    Introduce splinterdb_private.h to carry extern declaration of prototype of
+    validate_key_in_range(), with nested #include of splinterdb.h .
+
+[33mcommit d4653bdedd1a916df88054a22efcd84d0e487432[m
+Author: Deukyeon Hwang <hdeukyeon@vmware.com>
+Date:   Wed Jun 8 14:57:17 2022 -0700
+
+    (#120) Handle invalid user MSGs in 'btree_insert' and 'btree_pack'
+    
+    In `btree_insert` and `btree_pack`, invalid user-type messages are not
+    handled properly. This change makes those functions return an error
+    when they receive invalid user-type messages. An error that
+    `btree_insert` returns is forwarded to an application. On the other
+    hand, when `btree_pack` returns an error, the program will be
+    asserted.
+
+[33mcommit 32c1d0d34f3b487fff0a5ec15c431bcbdc1c4bea[m
+Author: Deukyeon Hwang <hdeukyeon@vmware.com>
+Date:   Thu May 26 22:24:46 2022 -0700
+
+    (#395) Redefine enum types to have valid start values other than 0
+    
+    This commit is for code clean-up, not a bug-fix. A collection of enum
+    types are changed to have start values with something other than
+    0. This avoids risk of interpreting invalid value (0) as a valid enum
+    value. Consistently, rename all enum values as '_INVALID' rather than
+    '_UNINIT'. There is no functional change with this commit.
+
+[33mcommit 43dd5dad4408d5fac149c7912e36037f9851338f[m
+Author: gapisback <89874928+gapisback@users.noreply.github.com>
+Date:   Tue Jun 7 12:04:05 2022 -0700
+
+    (#410) Relocate unit-testing.md file to docs/unit-testing.md (#411)
+    
+    This commit does minor rearrangement of testing-related docs md-files:
+    
+     - Relocate unit-testing.md to docs/ folder
+     - Create small README.md files for functional/ and unit/ tests dirs.
+     - Update cached copies of testing.md and unit-testing.md in
+       docs/v0.0.1 to use correct dir-paths & links to other files.
+
+[33mcommit 23991a93582caad87462851d037f2a60df3edf10[m
+Author: Carlos Garcia-Alvarado <carlosgarciaalvarado@gmail.com>
+Date:   Fri Jun 3 15:42:29 2022 -0700
+
+    Update v0.0.1 documentation (#417)
+    
+    Co-authored-by: Carlos Garcia-Alvarado <cgarciaalvar@vmware.com>
+
+[33mcommit 40f8722795bdcd7cdfc76559ce4c85b8cd87ce2a[m
+Author: Carlos Garcia-Alvarado <carlosgarciaalvarado@gmail.com>
+Date:   Wed Jun 1 22:53:26 2022 -0700
+
+    Update download page to reference to main zip file (#416)
+    
+    Co-authored-by: Carlos Garcia-Alvarado <cgarciaalvar@vmware.com>
+
+[33mcommit 8e2abff41319b52345381fe07abcf6f561b692dd[m
+Author: Eric Lagergren <eric@ericlagergren.com>
+Date:   Sun May 29 11:46:58 2022 -0700
+
+    remove dependency on malloc.h
+    
+    It's non-standard and not actually used.
+    
+    Signed-off-by: Eric Lagergren <eric@ericlagergren.com>
+
+[33mcommit 581d7f1c39efd1cbc6c065cb0086deecfbdaedb5[m
+Author: Eric Lagergren <eric@ericlagergren.com>
+Date:   Sun May 29 11:31:51 2022 -0700
+
+    use xargs -I{} instead of the deprecated xargs -i
+    
+    Signed-off-by: Eric Lagergren <eric@ericlagergren.com>
+
+[33mcommit 005bda1400fbc222779d3b7897dd9c9ab0ded44d[m
+Author: michow <michow@users.noreply.github.com>
+Date:   Sun May 22 00:46:20 2022 -0700
+
+    updates to site (#412)
+    
+    * more styles for homepage
+    
+    Signed-off-by: michow <michow@smalltalk.agency>
+    
+    * additional set up for site
+    
+    * final icons for homepage
+    
+    * copy updates
+    
+    Co-authored-by: michow <michow@smalltalk.agency>
+    Co-authored-by: milena-pavlova <pavlova_milena@hotmail.com>
+    Co-authored-by: Lee Springer <lee@pyrabot.com>
+
+[33mcommit 9141809ef62f950d2c397ab6a075ba3428e5c772[m
+Author: michow <michow@users.noreply.github.com>
+Date:   Thu May 19 09:59:15 2022 -0700
+
+    Final icons and updates to SplinterDB web-page (#409)
+    
+    * more styles for homepage
+    * additional set up for site
+    * final icons for homepage
+    * swap order of image and copy
+    
+    Signed-off-by: michow <michow@smalltalk.agency>
+    Co-authored-by: michow <michow@smalltalk.agency>
+    Co-authored-by: milena-pavlova <pavlova_milena@hotmail.com>
+    Co-authored-by: Lee Springer <lee@pyrabot.com>
+
+[33mcommit f79b841f4b320a6692d24388f292e93afcd35b46[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Tue May 17 01:16:42 2022 -0700
+
+    Make MAX_INLINE_{KEY,MESSAGE}_SIZE functions of page size (#407)
+    
+    * generalize MAX_INLINE_{KEY,VALUE}_SIZE to adjust to page_size
+    * add sanity checks
+    * expand allowed page sizes
+
+[33mcommit ad543e6c07f2177b343a9b9fd9a7271926f65477[m
+Author: michow <michow@users.noreply.github.com>
+Date:   Sat May 14 03:20:02 2022 -0700
+
+    More site setup (#408)
+    
+    * more styles for homepage
+    
+    Signed-off-by: michow <michow@smalltalk.agency>
+    
+    * additional set up for site
+    
+    Co-authored-by: michow <michow@smalltalk.agency>
+    Co-authored-by: milena-pavlova <pavlova_milena@hotmail.com>
+
+[33mcommit fb526e23656830ff84185dc80fb4d8f1593fc572[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Wed May 11 20:56:06 2022 -0700
+
+    Add list of contributors (#406)
+
+[33mcommit 020dc748564df601add444c9276228adb4e9b00f[m
+Author: michow <michow@users.noreply.github.com>
+Date:   Thu May 5 22:41:26 2022 -0700
+
+    more styles for homepage (#405)
+    
+    Signed-off-by: michow <michow@smalltalk.agency>
+    
+    Co-authored-by: michow <michow@smalltalk.agency>
+
+[33mcommit 05ac3efe58731a395b004eeb1eeb45c0fb2fc501[m
+Author: michow <michow@users.noreply.github.com>
+Date:   Thu Apr 28 18:01:23 2022 -0700
+
+    basic styles and markup for homepage (#404)
+    
+    Co-authored-by: michow <michow@smalltalk.agency>
+
+[33mcommit 20d6dabafce055dfb2a79564d5bbe60763fe5169[m
+Author: michow <michow@users.noreply.github.com>
+Date:   Wed Apr 20 15:46:30 2022 -0700
+
+    check in OSS template (#402)
+    
+    Co-authored-by: michow <michow@smalltalk.agency>
+    
+    Dummy version of the SplinterDB site.
+
+[33mcommit c9dfe4c868249f4b48ab16c2bc9068a505f06058[m
+Author: gapisback <89874928+gapisback@users.noreply.github.com>
+Date:   Thu Apr 7 11:08:56 2022 -0700
+
+    (#305) Add instrumentation to track assertion in clockcache_get_internal() (#401)
+    
+    splinter_test --perf, and some other tests, are randomly tripping up a
+    debug assertion in clockcache_get_internal(), which reports that we
+    are trying to cache a page from an unallocated extent. This problem is
+    not easily reproducible outside CI-runs where it is seen to occur sometimes.
+    
+    This commit improves the assertion message to report addresses
+    involved, and also calls-out to a print method to dump out allocated
+    extents bitmap. (This heavy-dump should only occur very rarely, if at all.)
+
+[33mcommit e677a4ef9c229ec2f9ef38183e7738d2fb78d89d[m
+Author: gapisback <89874928+gapisback@users.noreply.github.com>
+Date:   Mon Apr 4 08:12:11 2022 -0700
+
+    Add checks and unit-tests for few more invalid config params.
+    
+    * Add checks and unit-tests for few more invalid config params.
+    
+    Convert some existing platform_assert()s that validate disk-size,
+    extent-size and related config params to proper error messages.
+    Return proper $rc, and add few negative unit-tests to validate
+    these user-errors. (Checks were discovered while building C-sample
+    programs, through wrong-code.) Sanitize text of a few few existing
+    error messages. Deleted redundant assertions which are now
+    replaced by error messages.
+
+[33mcommit 5c99be6cc81263bdc510d34d24dd52e1a12a8b19[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Fri Mar 25 13:39:11 2022 +0000
+
+    (#354) splinter_test --perf: Fix bug in range-lookups test code.
+    
+    Earlier refactoring of splinter_test.c [under SHA 3b7bc58] caused a
+    bug which is probably the cause for excessively long run-times for
+    this test case. (The # of range lookups done were inordinately high.)
+    This commit fixes that bug, and additionally:
+    
+    - Adds extra progress messages under --verbose-progess flag.
+    - Fixes minor (divide-by-zero) bugs when this test is run with very
+      small # of --num-inserts rows.
+    - Enables splinter_test --perf in nightly runs with --verbose-progress
+      flag to run w/large data set
+    - Includes a quick perf run call to exercise new --verbose-progress
+      and --num-inserts options.
+
+[33mcommit b046b03e5adeea963012518f067d087b2d3d88d0[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Tue Mar 29 14:10:43 2022 +0000
+
+    (#396) NULL-out input handle(s) after close(). Rename dismount -> unmount.
+    
+    Minor rework to tighten the interfaces which close / deinit sub-system
+    handles:
+    
+    - Rename "dismount" to "unmount"; as in 'trunk_unmount()'
+    - splinterdb_close(), trunk_unmount(), test_deinit_task_system(),
+      task_system_destroy() now receive an addr-of-ptr to handle, and NULL-out
+      the handle upon a successful close / unmount / deinit. This will cause
+      a seg-fault if caller tries to access said handle after it has been closed.
+
+[33mcommit 4b6707b5d5f5a40b28abc7259cce4b801a2e0eed[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Fri Mar 25 13:39:11 2022 +0000
+
+    (#353) Add --verbose-progress test-config option. Add config_parse_test
+    
+    This commit adds following testing infrastructure, which will be used in
+    future work to diagnose slow-running perf-tests:
+    
+    - Add --verbose-progress test-config option. Introduce one small new print
+      msg under this option in splinter_test --perf test case
+    - Add new config_parse_test to verify that the config parsing logic is
+      correctly parsing this boolean option. Discovered latent bugs in
+      existing parsing logic, which are now fixed.
+    - Extend test.sh to invoke new unit-test case with required args.
+    - [ Minor: Rename PRInd() -> DECIMAL_STRING_WIDTH() ]
+
+[33mcommit d5857881ddc638666e9fed7cc6b521536299addf[m
+Author: gapisback <89874928+gapisback@users.noreply.github.com>
+Date:   Wed Mar 30 11:43:25 2022 -0700
+
+    (#280) Add test to exercise various existing / new print functions (#281)
+    
+    * (#280) Add test to exercise various existing / new print functions
+    
+    This commit adds a new test case that exercises various functions to
+    print different types of of pages, BTree innards, and RC-allocator
+    innards.
+    
+    - Add a function to print the trunk super-block
+    - Modularize BTree printing function to sub-fns for diff page types
+    - Modularize Trunk printing function to sub-fns for pivots, bundles etc
+    - Improve layout of allocator details, showing #extents, addr and count
+    - Minor corrections to some trunk print fns for proper alignment of output
+    - Update test.sh to include a specific call to execute this new test case.
+    - Added diagnostics.md, to give a quick list of links to print methods.
+    
+    All output from this test case will now be go to the /tmp file where tests
+    redirect stdout.
+
+[33mcommit 5cc3b81dabecee1ab05abe4b8e0df461e1077acc[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Wed Mar 30 03:07:16 2022 -0700
+
+    Build into subdirs of "build", make clean nukes "build" (#388)
+    
+    * make install no longer attempts to build anything
+    * make now builds everything in subdirs under build, and make clean cleans everything
+    * Enhance test.sh to test makefile build rules & behaviours
+    - Add test_make_run_tests(), which drives couple different
+      Makefile build-and-test feature testing:
+       - test_make_config_conflicts() - verify that Makefile
+         rules are correctly detecting config-conflicts
+       - test_make_all_build_modes() - Run parallel builds in
+         all build-modes, and verify that the builds don't
+         clobber each other. Verify that a few sample artifacts
+         are produced as expected.
+    - Add Examples to 'make help' under BUILD_VERBOSE=1 flag
+    
+    Co-authored-by: Aditya Gurajada <agurajada@vmware.com>
+
+[33mcommit 4256a54dbfbeaa0fd9dc96a839c8f8e3070ae2ed[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Tue Mar 29 21:59:06 2022 -0700
+
+    set extents_per_memtable to 2 * memtable_capacity (#390)
+    
+    set extents_per_memtable to 2 * memtable_capacity, and then set the trunk node size to half the physical size limit of the memtable.
+
+[33mcommit 6c680d7334d29398a7fbaf6060d41ad26a224ab5[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Fri Mar 25 12:54:28 2022 +0000
+
+    (#391) Fix memory leaks found in ASAN-test runs of quick unit-tests.
+    
+    Couple of test cases in splinterdb_quick_test.c were missing a call
+    to splinterdb_lookup_result_deinit() before exiting the test case.
+    This causes memory leaks, detected on ASAN-test-runs. This commit
+    fixes those problems.
+
+[33mcommit 1ca78ba7d03c05c74b34de39e2a49579b5f2c966[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Fri Mar 25 00:49:40 2022 +0000
+
+    Fix invocation of test binaries with $BINDIR path prefix.
+    
+    Nightly tests executed under nightly_test_limitations() were broken
+    as the test binaries were being executed from bin/ dir. This has been
+    reworked to live under build/bin. Regression crept in from #341
+    @SHA f5de8cf. Fix is to consistently use $BINDIR handle to locate test
+    binaries.
+
+[33mcommit f5de8cf33639bec6c73a52db46a75f96d73299b9[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Fri Mar 11 19:16:28 2022 +0000
+
+    (#341) Add tests to verify that various hard-limits are enforced.
+    
+    This commit adds checks in different places to validate that the
+    documented page-, extent-, key-size limits are properly enforced.
+    - Some asserts trapping these limits are converted to error messages.
+    - trunk_mount() and trunk_create() could now return an error rc in
+      case of a failure. Consolidate all IO-config param checking to
+      new laio_config_valid() function.
+    - Add new test, limitations_test, to verify that different Splinter
+      config / init / create interfaces fail when used with illegal values.
+
+[33mcommit 3b7bc5863f907e96f3f7c81e57b8f16238a13f38[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Wed Mar 9 07:32:03 2022 +0000
+
+    (#334) Refactor / modularize shared code in splinter_test perf tests
+    
+    Extract out shared / repeated code between --perf and --parallel-perf
+    test cases of splinter_test to sub-functions. Introduce the following:
+     - compute_per_table_inserts()
+     - load_thread_params()
+     - do_n_thread_creates()
+     - do_n_async_ctxt_inits(), do_n_async_ctxt_deinits()
+     - splinter_perf_inserts() - which wraps up few of above functions to
+       drive the inserts-phase of the workload
+     - splinter_perf_lookups() - drives lookups phase of the workload
+     - splinter_perf_range_lookups() - drives range lookups phase
+    
+    Rework chunks of test_splinter_perf() and test_splinter_parallel_perf()
+    to invoke these helper / refactored functions.
+    
+    This commit lays down the groundwork for future refactoring of other
+    test cases in this test, to improve code-sharing.
+
+[33mcommit 235fae239da1bd1a8b3ea3a49de2725bb41d81e4[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Wed Mar 2 08:18:56 2022 +0000
+
+    Clean up platform_log and friends
+    
+    Modifies platform_log() to take a platform_log_handle * parameter. This
+    functionality is now handling with platform_default_log().
+    
+    Changes Platform_stdout_fh to Platform_default_log_handle.  Changes
+    Platform_stderr_fh to Platform_error_log_handle.  Removes
+    PLATFORM_DEFAULT_LOG_HANDLE and PLATFORM_ERR_LOG_HANDLE.
+    
+    Replaces many instances of platform_log_stream with platform_log.
+    
+    Adds a platform_log_handle * parameter to *_print_* functions.
+    
+    Rework platform_stream_handle to be a struct on platform_linux.  Clean
+    up call sites with implicit stream parameter to be explicit.
+    
+    Change trunk logging to be dependant on a config parameter instead of a
+    define.
+
+[33mcommit 28c78d5fac844617645fb564dcae6bf4ccb0401d[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Sat Mar 19 03:37:23 2022 +0000
+
+    Add ownership to platform_mutex, fix/cleanup bundle accounting
+    
+    Adds an `owner` field to `platform_mutex`, which is used for asserting
+    that threads are correctly locking and unlocking the mutex.
+    
+    Fixes a bug where `trunk_bundle_live` and `trunk_bundle_live_for_pivot`
+    would answer incorrectly. This is because they used the bundle start
+    branch to determine liveness, but accessing the start branch of a dead
+    bundle results in undefined behavior.
+    
+    Partially fixes the convoluted logic in `trunk_flush_fullest`, where the
+    return value would frequently be FALSE, despite a successful flush.
+    Changes the return type to platform_status.
+    
+    Addressing Aditya's Comments
+    
+    Fix broken debug_assert in platform_mutex_destroy
+    
+    Minor
+
+[33mcommit 73f0d376bca052d427a2c14fcf17326e170c7e65[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Tue Mar 22 00:04:34 2022 -0700
+
+    Robj/message encoding (#362)
+    
+    * store message type in btree structures, eliminate message encoding stuff
+    * remove writable_buffer from the public interface, since it is now replaced by merge_accumulators
+    * remove data_handle message_type field
+    * remove git version from Makefile config tracking; normalize DELETE messages to have no payload
+
+[33mcommit 3b6c5b6083f52cb98ca1506fc07dbb281706a644[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Mon Mar 21 12:51:27 2022 -0700
+
+    Add support for logging to splinterdb.[hc] (#384)
+
+[33mcommit 6c331fd5054b2654c974f7b0a136afacf2150de8[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Sun Mar 20 04:56:25 2022 +0000
+
+    (#377) Purge 'debug' as make target. Fix CI-build scripts.
+    
+    This commit cleans-up CI-scripts of 'make debug' which is no
+    longer needed. CI jobs drive 'make' using BUILD_ env-vars to
+    control release v/s debug builds. Makefile no longer needs to
+    support 'debug' target. Update the 'help' message to list
+    supported targets.
+
+[33mcommit 4bd4c52b87073878f3224eaf22f700e1f8706002[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Sun Mar 20 04:39:27 2022 +0000
+
+    (#378) Minor re-indentation of run_with_timing() calls
+    
+    Re-indent long-lines to invove tests via run_with_timing() to
+    properly align multiple parameters. Improve readability and
+    consistency in test.sh .
+
+[33mcommit bdaa95b6ccf030df9c7aef2a6d6dee3105124e84[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Sat Mar 19 18:47:09 2022 -0700
+
+    Update build.md (#381)
+    
+    Fixes #380
+
+[33mcommit a5f2a1b724da2eabaecf9c7d998d95f60a414a89[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Sat Mar 19 18:09:12 2022 -0700
+
+    build into directories based on flags (#332)
+    
+    Build into directories based on build config, add pretty printing, add make help, fix numerous make bugs
+    
+    Builds now go into a build directory, e.g. `build` or `build-debug` based on configuration options supplied to make.
+    
+    See `make help` for details.
+
+[33mcommit 0edbba62f9275f1c0ad9e7b6d5529c2a47f3a7d2[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Fri Mar 18 17:14:18 2022 -0700
+
+    (#371) Pre-stage CI-jobs' script changes to work with Makefile changes.
+    
+    Upcoming PR #332 changes Makefile targets to build the library. Those
+    changes will require changes to the commands invoked by CI-jobs to build
+    and test the library. This commit pre-stages those CI-build script
+    changes, so that the upcoming Makefile changes can be tested independently
+    before they are merged to /main. (This change depends on PR #372, which
+    adds minimal support for 'help' target to Makefile.)
+
+[33mcommit 5f51676c0d48d6a47e107dfc3d544a535346147d[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Fri Mar 18 16:41:57 2022 -0700
+
+    (#370) Add 'help' to Makefile, report minimal usage msg.
+    
+    Pre-stage support for 'help' target to Makefile, so that associated
+    changes to CI-build scripts can be pre-staged (to address issue #371).
+    All this is needed to smooth the integration of larger Makefile
+    rework coming up under PR#332.
+
+[33mcommit 51d8d092e55b3e1e1ac1f38ea77f34f45ab0620a[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Wed Mar 16 22:53:30 2022 -0700
+
+    init all fields in btree pack requests (#363)
+    
+    init all fields in btree pack requests
+
+[33mcommit a14433e7c354eed410f51dae8dfb92f379502185[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Tue Mar 15 17:06:27 2022 -0700
+
+    (#349) Clarify in limitations that min-key size should be 8 bytes.
+    
+    Phrase limitation that for key-sizes < 8 bytes, support is experimental.
+
+[33mcommit 1449bfbe83ff596a622b6b6c5ff1bafcbbc5b058[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Tue Mar 15 23:34:48 2022 +0000
+
+    (#365) Restrict --key-size to be >= 8 while parsing test-config options
+    
+    Execution of tests using stand-alone binaries, such as splinter_test,
+    btree_test, can run into unreliable behaviour with smaller key-size values.
+    Temporarily, restrict the min-key-size to be >= 8 bytes through these
+    interfaces.
+
+[33mcommit 41d25257f73ca24bb8895ea7fd5979cd040ea21f[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Sun Feb 20 14:17:54 2022 -0800
+
+    Fix bugs in filter building and branch replacement, additional cleanup
+    
+    Fixes a bug in filter building, where the filter building scratch space
+    in trunk_compact_bundle_req would not be zeroed out when the filter
+    build extends to a sibling causing unexpected failures. The fix creates
+    a new struct trunk_filter_req which stores this scratch and is allocated
+    on the stack.
+    
+    Fixes a bug in trunk_replace_bundle_branches, where end_branch would be
+    adjusted before the pivot tuple counts are adjusted, causing dead pivots
+    to appear live, resulting in unexpected behavior and failures.
+    
+    Fixes another bug in trunk_replace_bundle_branches, where pivot start
+    bundles would not be adjusted in the empty compaction case.
+    
+    Fixes a bug in next node transition in trunk_bundle_build_filters.  The
+    bug occured due to duplication amond variables in filter_req and
+    compact_req. The node fetching mechanism uses compact_req for the node
+    addr, whereas the addr was being updated on next node transition for
+    filter_req.  Fixes the bug by removing the node addr, height, bundle_no,
+    etc., fields from filter_req, so that they are not duplicated.
+    
+    Removes deprecated index_filter_cfg from trunk_config.
+    
+    Removes commented out debug code.
+    
+    Format Fixes, Minor Comments
+    
+    Add unit test for naive range delete
+    To focus that particular test:
+       make clean
+       make debug
+       bin/unit/splinterdb_stress_test test_naive_range_delete
+    
+    Multiple bug fixes with empty compactions
+    
+    Fixes multiple bugs with empty compactions:
+    1. Properly adjusts the subbundle filter header values
+    2. Deallocates the Btree
+    3. Fixes the criteria to adjust subsequent bundles
+    
+    Adds additional verification to trunk_verify:
+    1. Verifies that a pivot with tuples in a whole branch has a filter
+    2. Verifies that the subbundle filter indices match in subbundles and
+       header
+    
+    In order to verify 1 above, switches tuple accounting in pivots to split
+    the tuples in bundles and in whole branches.
+    
+    Fixes pivot tuple accounting for compacted bundles
+    
+    Compacted bundles used account tuples using the pre-compaction counts,
+    but this caused them to fail verification. Fixes this to use
+    post-compaction counts.
+    
+    Clean up `trunk_pivot_lookup` and `trunk_print_lookup`
+    
+    Removes the unused `found` parameter from `trunk_pivot_lookup`.
+    
+    Applies this change to the logic in `trunk_print_lookup`.
+    
+    Modifies `trunk_print_lookup` to print to a stream for better
+    multithreaded output.
+
+[33mcommit 69cc0866a3bd043c87232c92e3c6ef2d70c13ae8[m
+Author: Daniel Gustafsson <gustafssonda@vmware.com>
+Date:   Mon Dec 20 11:15:46 2021 +0100
+
+    Fix multiple typos in code comments.
+    
+    Authored by: Daniel Gustafsson <gustafssonda@vmware.com>
+
+[33mcommit 33a306be12fd8e37d654917fe7786382082e0b12[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Sat Mar 12 18:51:34 2022 +0000
+
+    (#348) Include few test cases to exercise max and some small key-size
+    
+    Extend test.sh to verify that splinter_test runs with max key-size
+    as documented. Exercise couple of tests with few diff key-size values,
+    for additional coverage.
+
+[33mcommit a0df1cad1610239a87789e994f28429e2fd55797[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Fri Mar 11 21:48:53 2022 +0000
+
+    (#339) Update docs to reflect max key-size limit; other minor updates
+    
+    Update the limitations to reflect max key-size limit, that was
+    needed to address other physical limits on the trunk nodes.
+    Adjust MAX_KEY_SIZE down to 121, as per recent check-in.
+    Explicitly state supported page-size (4K) / extent-size limits (128K)
+    Minor edits to verbiage of few other limitations.
+
+[33mcommit 92a0cd56cc40e779205ee0b384597c7ca704aeff[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Sun Mar 13 12:43:27 2022 -0700
+
+    (#358) Skip splinter_test --perf runs in nightly jobs.
+    
+    This commit comments out the call to 'splinter_test --perf' tests, which
+    is known to be slow-running when range-lookup threads are configured.
+    Run 'splinter_test --parallel-perf' with smaller workload. These two
+    changes should enable CI-nightly test runs to complete within 6 hour
+    timeout limit.
+
+[33mcommit 8f192c1cf0d2e96506c533d8e0c040d5c324a724[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Sat Mar 12 15:46:51 2022 -0800
+
+    update MAX_KEY_SIZE based on additional metadata in trunk nodes (#351)
+
+[33mcommit 2f569e5fac0657b1d302e44ce116f1812dbcc74f[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Sat Mar 12 02:29:24 2022 -0800
+
+    support any reasonable TEST_MAX_VALUE_SIZE in splinterdb_quick_test (#347)
+
+[33mcommit 3c4b93f7fd2456ff21cb76cb482a0deca2cbb0ca[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Sat Mar 12 01:54:29 2022 -0800
+
+    Eliminate data_config->message_size (#296)
+    
+    Completely eliminate data_config->message_size and MAX_MESSAGE_SIZE
+    
+    Modify trunk and memtable to use tuple bytes and extents instead of tuple counts in their policy decisions
+    
+    Clean up writable_buffer API
+    
+    Improve functionality test to generate messages of varying size
+    
+    Add message-generator code to test infrastructure
+    
+    Fix insertion bug in btree.c
+    
+    Add tests for writable_buffer (courtesy Aditya)
+    
+    Numerous cleanups and other improvements
+    
+    Co-authored-by: Aditya Gurajada <agurajada@vmware.com>
+
+[33mcommit 448eea024a983be2f1c94fa9aa6217fb0246d7c1[m
+Author: Gabe Rosenhouse <grosenhouse@vmware.com>
+Date:   Fri Mar 11 14:34:53 2022 -0800
+
+    fixup make target for compile flags (#340)
+    
+    - pass cflags, which will pull in the PLATFORM_DIR define
+
+[33mcommit f60f2df30386be6ebdd819ab67de577d2e9cbde2[m
+Author: Gabe Rosenhouse <rosenhouse@users.noreply.github.com>
+Date:   Thu Mar 10 15:57:48 2022 -0800
+
+    Public API works with slices (#338)
+
+[33mcommit e92038f9ecaf03b4bfcbdf8e893f9c1074371513[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Sun Mar 6 00:24:10 2022 +0000
+
+    Add Assertion that Trunk Node Fits in a Page
+    
+    Adds an assertion in config that the trunk header, pivot data, and
+    branches physically fit in a page.
+    
+    Change `limits.h` to reflect actual max key size of 136B
+
+[33mcommit e765801fca28929514083c3d028400c5ee5cb959[m
+Author: Gabe Rosenhouse <rosenhouse@users.noreply.github.com>
+Date:   Wed Mar 9 22:33:20 2022 -0800
+
+    Platformize public API (#297)
+    
+    - framework to support other platforms is lifted to the public API
+    
+    - programs compiling against SplinterDB now need to set a define to
+      select the platform
+
+[33mcommit 234d75c16c9d1f5e417021ce7cb258986cec7dfc[m
+Author: Gabe Rosenhouse <rosenhouse@users.noreply.github.com>
+Date:   Wed Mar 9 20:40:24 2022 -0800
+
+    make target for compile_flags (#337)
+
+[33mcommit 810621b5d2bd47b10409d1a407bcaac72d683397[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Wed Mar 9 13:58:17 2022 -0800
+
+    better error in tests when key-size is too large (#333)
+
+[33mcommit 30f3beec58474fe3d6abac90aa4495c53b1c300d[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Tue Mar 1 15:23:01 2022 -0800
+
+    Update various docs to reflect testing interfaces. Clean-up some hyperlinks
+    
+    Introduce top-level Docs TOC. Perform minor clarifying updates to the docs.
+    Add testing.md as a top-level chapter on how-to test SplinterDB.
+    Where appropriate, provide code-level hyperlinks for contextual details.
+
+[33mcommit 4dd48e6d240606555b04117152e6ce6de523efaa[m
+Author: Carlos Garcia-Alvarado <carlosgarciaalvarado@gmail.com>
+Date:   Tue Mar 8 02:02:07 2022 -0800
+
+    Known Limitations Notes (#294)
+    
+    * Added SplinterDB limitations.
+
+[33mcommit fc49943bb741ed53b2bba2f75300b358e39d8e21[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Mon Mar 7 19:55:15 2022 +0000
+
+    Format Checks
+
+[33mcommit d5d37705e531119b51290cd0547cc57132767b6d[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Mon Mar 7 19:47:22 2022 +0000
+
+    Bugfix for Type Assertion in `trunk_async_lookup`
+    
+    Fixes a bug where an assertion that `type` is not update would be hit in
+    `trunk_async_lookup` on function exit. This could happen when an update
+    message is found, but there is still further IO required to finish the
+    lookup.
+    
+    This fix moves the relevent code, including the assertion, into the
+    `async_state_end` state.
+
+[33mcommit 09c4ae7229f4a5899867705d9f3f0fdd94888524[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Sat Mar 5 00:58:09 2022 +0000
+
+    (#308) Fix btree_test --perf checks to get it running w/min 4 GiB cache
+    
+    Existing test 'splinter_test btree_test --perf' runs into hard cache manager
+    errors with an under-configured cache, of default size of 1 GiB. This commit:
+    
+    - Adds checks in the test for min cache-size reqd, and will report a warning
+      stating that a higher cache config may be needed to run. Empirically, 4 GiB
+      seems to suffice.
+    - Include this test in the set of PR-CI test-cases to run. Adds < 1 min.
+
+[33mcommit d78a1dc00c39c81430f8d07e4eb1f811b5e5fea0[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Mon Mar 7 07:30:33 2022 +0000
+
+    (#327) Reduce # of rows for splinter stress tests to avoid seg-fault.
+    
+    Nightly tests for 'splinter_test --functionality' are still failing for
+    cache_size 1 GiB, with 10 million rows. (Tracked by an existing issue.)
+    For now, as a workaround, drop the # of rows for this case to 1 mil.
+    This seems to work when test is run standalone outside CI-envs.
+
+[33mcommit 12eb5e7f12b5ede5959b32a2bca4f1a1c9b9a7e2[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Fri Mar 4 01:47:55 2022 +0000
+
+    (#321) Extend test.sh to run collection of stress / perf nightly tests
+    
+    This commit extends test.sh to support "RUN_NIGHTLY_TESTS=true", under
+    which a collection of stress & performance tests can be run. For now,
+    add few functional and async-perf tests. This set takes just short of
+    an hour on Nimbus-VMs. './test.sh --help' will generate brief usage msg.
+    Include couple of 'cache_test --perf' cases, to run in nightly tests.
+
+[33mcommit 5ac7bdcba0e429d7c5f1b1adec3b595faf0354e7[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Thu Mar 3 21:19:42 2022 +0000
+
+    (#312) Fix divide-by-zero exception in cache_test --perf test
+    
+    An odd combination of --cache-capacity-gib 6, with default db-size
+    of 30 GiB, ends up causing a divide-by-zero exception.
+    This occurs due to a chance coincidence that [min,max] inputs to
+    cache_test_index_itor_rand_init() are the same when establishing
+    a random index for page index to choose from. This commit fixes
+    this bug locally, adjusting the input 'min' value from caller to
+    ensure that [min < max]. Add asserts to check these.
+    
+    Following passes cleanly now:
+    $ driver_test cache_test --perf --cache-capacity-gib 6
+    $ driver_test cache_test --perf --cache-capacity-mib 256 --db-capacity-mib 1280
+
+[33mcommit 678ad87074bf70be5e287227022232b615c76a12[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Thu Mar 3 01:19:01 2022 +0000
+
+    Expand assert messages to print values involved.
+    
+    This commit updates a few asserts to print the affected values.
+    These were encountered during stress-test stabilization. Getting
+    these changes in will help debug tests where these asserts trip.
+    Adjust assert messages to reflect reason for failure. Print values.
+    In one instance, change assert() to platform_assert().
+
+[33mcommit 3dd24b14e9057ad10d1a65f49473fc985785cb63[m
+Author: Aditya <agurajada@vmware.com>
+Date:   Thu Mar 3 17:46:24 2022 +0000
+
+    (#309) Test splinter_test: Fix Floating point exception in test_key()
+    
+    Test 'splinter_test --semiseq-perf' runs into a floating point exception,
+    caused by divide-by-zero. This occurs to runaway code due to a missing
+    'break', ending up accessing a variable that is 0, meant for TEST_PERIODIC
+    test execution. With this fix, above test moves ahead, to run into
+    issue #310.
+
+[33mcommit a8566beb49dbbef63b67aa2717f3c4539d0d2a6a[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Thu Mar 3 22:32:18 2022 +0000
+
+    CI-configuration changes to setup nightly (build &) test runs.
+    
+    Collection of yml changes to inject job definitions to run build and
+    tests on nightly basis. Stub-out call to [non-existent] nightly.sh which
+    will be added once these CI-configuration changes are seen to be stable.
+    
+    Authored under the guidance of Gabriel Rosenhouse <grosenhouse@vmware.com>
+
+[33mcommit 0a62556c41527f0dde114c81df5499eeb2ffbec9[m
+Author: Gabe Rosenhouse <rosenhouse@users.noreply.github.com>
+Date:   Thu Mar 3 14:05:38 2022 -0800
+
+    CI: refactor pipeline generation templates (#316)
+    
+    This should make it easier to navigate and make subsequent changes.
+    
+    It is a pure refactor: it doesn't change anything about the resulting
+    pipeline:
+       ci/apply-pipeline.sh
+    shows
+       no changes to apply
+
+[33mcommit 916625a8d32ebf533a75f18ef17961ef6b5021fb[m
+Author: Gabe Rosenhouse <rosenhouse@users.noreply.github.com>
+Date:   Wed Mar 2 17:09:20 2022 -0800
+
+    Remove rust (#307)
+
+[33mcommit 9f8d5bc59e7592884488bba0a329bbdb8c0f5a9a[m
+Author: Gabe Rosenhouse <rosenhouse@users.noreply.github.com>
+Date:   Wed Mar 2 10:59:51 2022 -0800
+
+    fix concurrency bug in compaction (#241)
+    
+    also btree: assert that num_tuples isn't too big
+    
+    Co-authored-by: Alex Conway <ajhconway@gmail.com>
+
+[33mcommit a2768f5d8394f15bef5226056b59294a5f096513[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Fri Feb 18 23:01:36 2022 +0000
+
+    (#272) Rework splinter_test to address slow performance of unit tests
+    
+    This commit rearranges the build logic and test-exec logic to address
+    the slow performance of unit-tests that has been caused by the
+    addition of unit/splinter_test tests (under SHA d76be83).
+    
+    - Makefile rules are adjusted to -not- include splinter_test in the unit_test
+      binary. Standalone unit/splinter_test binary will still be built. This
+      way the overall execution time of unit_test alone will be significantly
+      reduced. E.g. in normal builds, the execution time for just the unit_test
+      binary drops from 163s to 18s.
+    
+    - Fix bugs in ctest_process_args() which prevented specifying config params
+      for an individual unit-test. Now, we can run splinter_test standalone with
+      a reduced config (e.g. --num-inserts <small-#-of-rows> )
+    
+    - In the test itself, resurrect the test_inserts() case, which will be executed
+      with the default test config, designed to trigger compaction.
+    
+    - Update test.sh to:
+       - Invoke splinter_test test_inserts, with the default test config
+       - Invoke splinter_test test_lookups, with new --num-inserts arg
+    
+    With these changes, the overall test execution times are far more acceptable.
+    Elapsed times of manual execution on local VM. The "With fix" times include
+    the fast-unit-tests plus the 2 cases of splinter_test run separately.
+                        ----------          --------          ------------------
+                        Before fix          With fix          %age improvement
+                        ----------          --------          ------------------
+    Unit-tests (Opt)   :    163s             53s (18s + 37s)  66% reduction
+    Unit-tests (Debug) :    459s  (7m 39s)  146s (2m 26s)     69% reduction
+    Unit-tests (MSAN)  :   2174s (36m 14s)  748s (12m 28s)    65% reduction
+
+[33mcommit 18af864a1276170daf43303758aca6de8f0d5e32[m
+Author: Gabe Rosenhouse <rosenhouse@users.noreply.github.com>
+Date:   Tue Mar 1 14:30:02 2022 -0800
+
+    Public API fixups
+    
+    * swap bool for _Bool
+    * purge size_t from public api (except the key_hash_fn needs to match XXH32)
+    * re-extract splinterdb_lookup_found
+
+[33mcommit 1f5827e40da12d62ecedee9c6376c26e870dd5ec[m
+Author: Gabe Rosenhouse <rosenhouse@users.noreply.github.com>
+Date:   Tue Mar 1 14:02:32 2022 -0800
+
+    Update docs
+    
+    - Update to use merged API with new name
+    - Extract Docker stuff into its own file
+    - Touch up contributing page
+
+[33mcommit f9b47b5d83cfd4abe938ef98b73d051a2c7a2324[m
+Author: Gabe Rosenhouse <rosenhouse@users.noreply.github.com>
+Date:   Mon Feb 28 17:25:56 2022 -0800
+
+    Expose a single public API (#289)
+    
+    This merges splinterdb_kv (previously kvstore_basic) into splinterdb.
+    
+    - Value-oriented functions are available in the splinterdb module
+    - The simple data_config with lexicographic key sort and no-UPDATE
+      has been promoted to a public default_data_config module, which can be
+      passed to a splinterdb at initialization.
+    - The variable-length key facade is now a required part of the splinterdb module
+      Internally, it still converts things into fixed-length keys. This bit will be
+      easy to remove once trunk.c grows real support for variable-length keys.
+    - For application code that was consuming the old splinterdb_kv / kvstore_basic,
+      the function names and argument-order have changed a bit, but semantics are
+      preserved. App code instantiates a splinterdb with a default_data_config and
+      gets a simple key/value API as before.
+
+[33mcommit 43f92bffc3a5a97366aa80ff3cd312b0915338a5[m
+Author: Eric Hoffman <yuri@tenuki.org>
+Date:   Mon Feb 28 15:01:36 2022 -0800
+
+    Ehoffman/novla (#271)
+    
+    rewrite variable length array stack allocations to use the heap to avoid stack space exhaustion and eliminate dependency on newer compilers to support it. regularize some heap usage
+
+[33mcommit 5aae6ce77dc78ed384a3c662c12a76ee5698713b[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Sat Feb 26 10:52:09 2022 -0800
+
+    (#287) Fix COPY command in Dockerfile to do recursive copy.
+    
+    Docker images created in CI-pipelines are not fully populating the
+    bin/unit/* subdir. That has mini unit-test binaries that may need to
+    be run on their own (by test.sh). This commit mildly corrects the
+    COPY command used in Dockerfile to ensure that all stuff under
+    bin/* is recursively copied, which will pull-over stuff from bin/unit/*
+    also to the Docker image.
+
+[33mcommit 91d48ae466437b6495de187dd84689ba2089cc03[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Fri Feb 18 07:17:52 2022 +0000
+
+    (#274) Support --list arg to list unit-test suite-names & test-case names
+    
+    This commit adds the --list argument which can be used to list all the
+    suite-names that can be run from the unit_test binary. It can also be
+    used to list the test case names for a specific suite-name, or for a
+    standalone unit-test binary.
+    
+    Overhaul the unit-test README.md docs to reflect the current state of
+    unit testing build and test execution interfaces.
+
+[33mcommit 5f6c7d3a2fcff5e36ddc2ebe64e38cdd0a55db14[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Wed Feb 23 20:59:07 2022 -0800
+
+    fix dependency issues in Makefile (#284)
+    
+    Fix several issues with dependencies in the Makefile.
+    
+    It turned out there were several pitfalls that needed to be avoided. Read on for what I learned.
+    
+    I had been observing that sometimes a make would succeed even though it had not recompiled all the files changed since the last build. The first layer of issue was rules of the form:
+    
+    some_target: dependency1.o
+      ld -o some_target dependency1.o dependency2.o
+    Note that some_target really depends on two .o files, but make is told about only one of them. Doh!
+    
+    The fix for this is to write all recipes to refer to the dependencies in the rule and to never list any inputs explicitly in the build recipe. That way an omitted dependency will fail as an error when you attempt to run the recipe. The Makefile now does this. The only recipes are on lines 157-169.
+    
+    The second pitfall, which I suspect is why some violations of the first rule were introduced, was the use of convenience targets in rules. For example, a convenience target is fine by itself:
+    
+    bin/foo: ...
+      ....
+    
+    # a shorthand way to build bin/foo
+    foo: bin/foo
+    But convenience targets should not be used as prerequisites of other targets:
+    
+    # OK: bar depends on its real prereq
+    bin/bar: bin/foo
+    
+    # WRONG: baz depends on the convenience target
+    bin/baz: foo
+    There are two problems with this. First, baz will always get rebuilt unnecessarily, since foo will never exist. Second, if there was a generic pattern recipe for, say, building a %/baz from a %/foo, then make will not find it. As a result, this target may be written with its own one-off recipe. And that recipe may be wrong or become wrong over time, since it is less likely to be maintained with the generic recipes.
+    
+    Another problem I encountered is that the way ctest automatically discovers all the tests in the binary is prone to silently omit tests when you omit a .o in the linking phase. Briefly, ctest creates a special section of the binary that contains an array of data structures, each of which describes a test. So, if you add another .o file on the linking command line, then its tests get added to the special section, and its tests get run automatically.
+    
+    As a result, omitting a .o on the linking command for a ctest executable results in a successful executable that simply doesn't run the tests. In other words, it happily reports that everything is ok even though some or all of the tests are missing. So we need to be very careful about ctest executable dependencies.
+    
+    Finally, to support building individual ctest executables for each subsystem, we need to list the dependencies of each mini unit test by itself. I tried using pattern rules to specify common elements of their dependencies, and then concrete rules for each test's specific dependencies. This does not work, because make will discard any dependencies from pattern rules as soon as it sees a concrete rule for your target. The work-around is to generate concrete rules algorithmically. See lines 198-201.
+    
+    I haven't fully fixed the logic for switching between release and debug builds. I am concerned that the current approach is fundamentally incompatible with make. I would propose to fix it by moving bin, lib, and obj under a build directory, and having two different build dirs, e.g. debug-build and release-build. But I wanted to get feedback before doing that.
+
+[33mcommit b268f34e8e420037a23442aee3225b03a29fb31d[m
+Author: Gabe Rosenhouse <rosenhouse@users.noreply.github.com>
+Date:   Wed Feb 23 13:53:00 2022 -0800
+
+    CI: bump lld to v13 and make default (#286)
+
+[33mcommit 80a10ef62ad7b85808e9736f9a783297b94546a5[m
+Author: Gabe Rosenhouse <rosenhouse@users.noreply.github.com>
+Date:   Wed Feb 23 12:36:19 2022 -0800
+
+    CI build env: clang-13 is the default clang (#285)
+
+[33mcommit 7f440ccc27673e2d309803cd246b912508cb361a[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Tue Feb 22 10:49:52 2022 -0800
+
+    (#282) Revert from Ubuntu 22.04 to v20.04, to resolve CI-incompatibilities
+    
+    Recent upgrade to Ubuntu 22.04 _seems_ to run into some issues
+    due to impedance with CI-test infrastructure. This is suspected to be
+    the cause of some tests not working on CI, or failing to execute due
+    to permission issues. This commit reverts the changes done in SHA e7d0ae0
+    (Use Ubuntu 22.04 LTS in CI). We go back to Ubuntu 20.04 "focal"
+    version, using default gcc (v9.3.0) and install clang-13, plus
+    clang-format-13, for CI runs.
+
+[33mcommit 10a917ef42575d56a9c9659731b36524ae393e6d[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Fri Feb 18 14:40:24 2022 -0800
+
+    Normalize configs (part 2) (#276)
+    
+    Continue to normalize configs.
+    
+    Also, improve api to cache_config.
+    
+    Various cleanups to clockcache.c
+    
+    Co-authored-by: Gabe Rosenhouse <rosenhouse@users.noreply.github.com>
+
+[33mcommit 43333884f58cda6083f80550f27e22c3956f43b8[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Fri Jan 28 23:17:13 2022 +0000
+
+    (#230) Tag disk-resident structs as ONDISK. Other code-tightening.
+    
+    This commit introduces no new functionality to the product, but makes
+    the following changes to better track and document various artifacts
+    in the SplinterDB library. Add a little bit of code-tightening by way
+    of debug & static assertions.
+    
+    - Tag definition of structures that are disk-resident with the "ONDISK"
+      attribute, which is a synonym for __packed__ attribute.
+    - Formalize super-block page-type as of PAGE_TYPE_SUPERBLOCK
+    - Add comments to explain the nature of such structures, and other
+      constants that might affect disk-resident footprints.
+    - Document hard limits such as BTREE_MAX_HEIGHT, MAX_INLINE_KEY_SIZE etc.
+    - Introduce clockcache_get_entry(), as an accessor for clockcache->entry[]
+      Validate with debug_assert against out-of-bounds access given entry_number.
+    - Various other comment cleanup changes:
+      - Minor renames of some mnemonic for readability.
+      - Purge straggling references to VARIABLE_LENGTH_BTREE_* in names
+      - Rename VARIABLE_LENGTH_BTREE_UNKNOWN -> BTREE_UNKNOWN_COUNTER
+    
+    Acknowledgements: Code clarifications, descriptions and commentary
+    contributed primarily by Alex Conway and Rob Johnson.
+
+[33mcommit d76be8399b9f821ed5ed603c6f1310ee402f61b1[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Wed Jan 26 15:13:24 2022 +0000
+
+    (#223) Refactor Splinter basic functional test into unit/splinter_test
+    
+    This commit refactors the basic functionality testing of Splinter out
+    of functional/splinter_test into CTests unit/splinter_test . The existing
+    test code is split into test_inserts() and test_lookups(), where the
+    latter is a collection of sub-test-cases for different types of lookups;
+    synchronous, asynch, lookups-by-range etc.
+    
+    test_lookup_by_range() is a modularized, reusable function, and
+    exercised for 3 different num_ranges values (for slightly addl coverage).
+    
+    To avoid CI test-execution time out issues, currently test_inserts() is
+    skipped, but that functionality is covered in the other lookup case.
+    Fix couple of memory leaks detected by ASAN builds.
+
+[33mcommit 5931754798275d7d13009fffd4caa8d0f7716866[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Wed Feb 16 21:02:20 2022 +0000
+
+    (#268) Collect & report test-execution elapsed time metrics.
+    
+    Enhance the test-driver script, test.sh, to capture the elapsed
+    time for each test run. All test execution is now driven by
+    run_with_timing(), which will compute & log elapsed-time metrics.
+    Generate a simple summary report at the end for each type of test
+    that was run.
+
+[33mcommit 29889b5b45b4333e1a9b1fbb4655198e71c7f0e9[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Wed Feb 16 05:10:58 2022 +0000
+
+    (#264) Fix memory leaks in unit-tests discovered by ASAN builds.
+    
+    Few unit-tests were leaking memory as reported by Address sanitizer
+    builds. This commit fixes those issues, to enable ASAN builds.
+    Additionally, relocate reporting of uname / cc --version to the
+    'clean' builds target. We will see this version info only for
+    full clean-builds (less-annoying, but still useful).
+
+[33mcommit 64eeedbb17af50be19a50d14deb1dcb2e30684dd[m
+Author: Gabe Rosenhouse <rosenhouse@users.noreply.github.com>
+Date:   Wed Feb 16 11:03:09 2022 -0800
+
+    bump CI timeouts to allow for increased test run times (#267)
+
+[33mcommit 5a04e82c22925a7f4e5b50dd9b20d8d8a473af7e[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Wed Feb 16 11:00:56 2022 -0800
+
+    Gabe/test config (#262)
+    
+    * move config.[h,c] to tests
+    * copy some fields and defaulting into splinterdb_config
+    
+    Co-authored-by: Gabriel Rosenhouse <grosenhouse@vmware.com>
+    Co-authored-by: Gabe Rosenhouse <rosenhouse@users.noreply.github.com>
+
+[33mcommit c3e77048d89246fc6f958c1b02c42c01db27554c[m
+Author: Gabe Rosenhouse <rosenhouse@users.noreply.github.com>
+Date:   Wed Feb 16 09:06:39 2022 -0800
+
+    CI ASAN covers unit tests (uses gcc compiler) (#263)
+    
+    * asan in CI uses gcc compiler
+    
+    * Makefile prints info about machine and compiler
+
+[33mcommit 96b7ca139e1945e1205727a2941738094e90f2f6[m
+Author: Gabe Rosenhouse <rosenhouse@users.noreply.github.com>
+Date:   Mon Feb 14 14:20:23 2022 -0800
+
+    ci runs address and memory sanitizers (#253)
+    
+    also update Makefile comments about running sanitizers
+
+[33mcommit 6a4967fa65cb503a0edc3c1fb6fa3b32adc5e183[m
+Author: Gabe Rosenhouse <rosenhouse@users.noreply.github.com>
+Date:   Sun Feb 13 15:15:57 2022 -0800
+
+    ci: all first-stage jobs block all second-stage jobs (#250)
+
+[33mcommit 0852efe1a355f1c67868849092e1c89356379ed1[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Thu Feb 10 21:53:50 2022 +0000
+
+    (#235) Rename SplinterDB core files, functions, typedefs.
+    
+    This commit does some basic reorganization and layering of SplinterDB modules.
+    
+      User-visible Key-Value module                         : splinterdb_kv.c
+      SplinterDB KV module dealing with keys & messages     : splinterdb.c
+      Core SplinterDB trunk, bundle, and other management   : trunk.c
+    
+    - Core splinter.c renamed to trunk.c . For now, it contains most methods
+      that deal with things in the main SplinterDB trunk trees.
+    
+    - Rename kvstore.c -> splinterdb.c . Associated test files are also similarly
+      renamed to splinterdb_test.c
+    
+    - Realigned "basic" Key-Value store implementation, in kvstore_basic.c, to
+      splinterdb_kv.c . Associated test files & methods similarly renamed.
+    
+    - Adjust Makefile rules and targets to cope with new file naming conventions.
+    
+    Tooling to automate renaming conversion, fix-ups to Rust code to match
+    renaming, and cleanup to various 'Kvstore' references provided by
+    Gabriel Rosenhouse <grosenhouse@vmware.com>
+
+[33mcommit ffb614d9bd62380509f4dcc6ca722f09b39c6d93[m
+Author: Gabe Rosenhouse <rosenhouse@users.noreply.github.com>
+Date:   Thu Feb 10 11:48:17 2022 -0800
+
+    ci workaround (#249)
+    
+    enable privileged ci runs to work around incompatibility between newer coreutils and older kernel on runway
+
+[33mcommit 1b4439fab39286e83a691199458702a36de64133[m
+Author: Eric Hoffman <yuri@tenuki.org>
+Date:   Thu Feb 10 09:36:23 2022 -0800
+
+    run clang-format on all .c and .h files (#247)
+    
+    * run clang-format on all .c and .h files
+    
+    * format-check.sh
+    
+    * change back to specific clang-format version
+    
+    * remove comment. update syntax
+    
+    * updates for format-check.sh
+    
+    - back to clang-format-13
+    - ignore shellcheck SC2046
+    - remove references to git refs
+    - on error, print suggested fix
+    
+    * provide simple command for fixing formatting across all files
+    
+    Co-authored-by: Eric Hoffman <ehoffman@vmware.com>
+    Co-authored-by: Gabriel Rosenhouse <grosenhouse@vmware.com>
+
+[33mcommit e7d0ae0b218c730ad0eaa7ef43545ebb75405936[m
+Author: Gabe Rosenhouse <rosenhouse@users.noreply.github.com>
+Date:   Wed Feb 9 20:01:39 2022 -0800
+
+    Use Ubuntu 22.04 LTS in CI (#248)
+    
+    Default compilers are clang-13 and gcc-11
+
+[33mcommit ba282fad34f3a38bab14ec9aa329ce57638e519e[m
+Author: Gabe Rosenhouse <rosenhouse@users.noreply.github.com>
+Date:   Wed Feb 9 12:45:03 2022 -0800
+
+    Makefile fixes (#246)
+    
+    * can add extra LDFLAGS without modifying the Makefile
+    * fix AddressSanitizer: odr-violation in bin/unit_test
+    * other small tidying
+
+[33mcommit 7930c19760f91483c5784defad119ce42feac549[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Tue Feb 1 17:00:43 2022 -0800
+
+    tests + CI: quick check by default
+    
+    Purpose: provide faster feedback in local dev env
+    and in CI
+    
+    - create an explicit list of known-fast tests
+    
+    - new local dev experience
+      - by default, test.sh only runs the fast tests
+      - set an env var to opt-in to running all tests
+    
+    - CI changes
+      - existing jobs continue to run all tests
+      - existing jobs get a 55m timeout
+      - new "quick-check" job must pass first
+      - quick-check job has a 5m timeout
+    
+    Skip slow tests by default
+    
+    CI will always run the full test suite
+    
+    Lengthen timeouts in CI to 55m
+    
+    add fast-feedback CI job
+    
+    full test runs wait until quick-check passes
+    
+    quick-check job has shorter timeout
+    
+    rename task timeout func
+
+[33mcommit 25efc406b07dd2d56ff9e9e807e3d0297054317b[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Tue Feb 8 00:34:39 2022 +0000
+
+    (#244) Apply clang-format-10 indentation rules to ctest.h file.
+    
+    With this commit the CTests tests/unit/ctest.h is re-indented to apply
+    clang-format-10 coding styles. (main.c is already conforming.)
+
+[33mcommit ce4abce28fdb5ad151fc31acff71cc78d0c8f5ec[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Wed Feb 2 15:21:30 2022 +0000
+
+    (#227) Refactor ctest_main() and related C-code out of ctest.h to main.c
+    
+    This commit relocates and rearranges a whole bunch of CTest code that
+    was defined in ctest.h to main.c . This way, the flow from main() ->
+    ctest_main() and minions is better seen through one source file.
+    Minor rearrangements of functions done in this file to keep things
+    in a somewhat logical order.
+
+[33mcommit 7496f53f0d5433a18697cabd099faba1c651605a[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Fri Jan 28 23:17:13 2022 +0000
+
+    Code cleanup: Fix comment blocks, indentation, and coding style issues.
+    
+    This is a non-code-changing commit that only changes comments & prolog
+    banners in different files. Minor edits are done to re-indent lines
+    in places. Any code changes that arise are due to clang-format fixes
+    that come about due to rearranging comment blocks etc.
+
+[33mcommit ab94b441a5bc500eb6467b65ec4caada3e7b8c32[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Thu Jan 20 17:55:38 2022 +0000
+
+    (#213) Refactor kvstore_test.c, util_test.c to run under CTests machinery.
+    
+    This commit refactors few more functional test to run under CTests machinery.
+    (The rest are too complex to merit any refactoring. They will continue to
+    be run under bin/driver_test, as functional tests.)
+    
+    - Break out single large kvstore_test.c test-case into following test-cases:
+    
+        - test_lookup_non_existent_key()
+        - test_insert_lookup_delete()
+        - test_iterator()
+        - test_close_open_key_access()
+    
+    - Refactor util_test.c, to run under CTests machinery.
+    - Relocate test_data.{h,c} to tests/ sub-dir, and adjust Makefile
+      build rules, and #include references appropriately. test_data is
+      shared between functional/ and unit/ test sources.
+    
+    - Purged references to these older versions from driver_test binary.
+      We are cutting-over to running these under the CTests driver.
+      Delete tests/functional/kvstore_basic_test.c
+    
+    - Remove invocation of functional tests that are now moved to CTests.
+    - Rework small chunks in kvstore_test.c to port fixes to this file
+      applied under SHA 3fce477.
+    - Fix debug builds issues; update Makefile.
+    - Need kvstore_lookup_result_init() after kvstore_close(), open()
+      before doing a new lookup, with previous 'result' struct.
+    - Add missing kvstore_lookup_result_deinit() calls.
+
+[33mcommit 6936b096c4b20707310e0e929890797009ad332f[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Fri Jan 28 23:34:03 2022 +0000
+
+    (#225) Extend debug_assert() to print user-specified message.
+    
+    Thes debug_assert() macro is a wrapper around platform_assert() which
+    was recently enhanced to print user-supplied messages.
+    
+    This commit slightly changes debug_assert() to extend the same printing
+    ability to this interface.
+
+[33mcommit 7598993b44de2d4613cc901efdf1adcbe909881a[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Sat Jan 22 18:57:07 2022 +0000
+
+    (#210) Enhance command-line processing to support --config options for unit-tests.
+    
+    This commit updates the naiive argument processing for Ctests to now
+    support the following syntax:
+    
+     $ unit_test [ --<config options> ]* [ <suite-name> [ <testcase-name> ] ]
+    
+     $ standalone_test [ --<config options> ]* [ <testcase-name> ]
+    
+    Currently, in unit/ tests, only btree_test.c has the ability to parse
+    command-line params, via config_parse(). That ability was temporarily
+    withdrawn when those tests were refactored to run under CTests.
+    
+    This commit now re-introduces that capability, and also provides similar
+    support for any other unit-tests that may need to have command-line args
+    to support different configurations.
+    
+    Logic to filter suite-name / test-case-name when runnning the 'unit_test'
+    binary was working, but it was mishandled / broken when running a
+    standalone_test. This problem is also fixed in this commit.
+    Now, one can issue, e.g.
+    
+        $ ./bin/unit/btree_test test_leaf_hdr
+    
+    ... to run all test cases named 'test_leaf_hdr%' from this unit-test.
+    
+    Any --config-options provided will be applied to that collection of
+    test-cases being executed.
+    
+    Update unit-tests README to document new interfaces & usages.
+
+[33mcommit 50e9fa2958469b96a31aaf014fae2af0effc00b0[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Thu Jan 20 13:18:58 2022 +0000
+
+    (#211) Change few CTests ASSERT_*() macros to print user-supplied msg w/arguments.
+    
+    This commit enhances following CTests-assertion checking macros, defined in
+    ctest.h, to now, optionally, receive a user-supplied msg w/arguments:
+        - ASSERT_EQUAL(), ASSERT_STREQ(), ASSERT_STREQN()
+        - ASSERT_NOT_EQUAL()
+        - ASSERT_TRUE(), ASSERT_FALSE()
+    
+    In some test files, mainly btree*test.c, places where these assertion
+    checks were preceded by an explicit platform_log() to print a message
+    are now converted to use this msg-printing facility behind the assertion
+    check.
+    
+    - Add macro VFPRINTF_USERMSG() to consolidate message printing code from
+      different CTest assert_*() interfaces.
+    - Withdraw 'raise_error' backdoor interface to assert_equal()
+    - Rework test case test_ctest_assert_prints_user_msg_with_params()
+      to package calls to invoke and verify the message printed by
+      VFPRINTF_USERMSG().
+
+[33mcommit 6135aa263a4a355c27b96c9a12fd2ddf8460bad3[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Mon Jan 24 12:51:52 2022 +0000
+
+    (#218) Rework body of platform_assert() to avoid a function call.
+    
+    This commit does minor rework to the body of the platform_assert()
+    macro to avoid a function call. In most cases, we expect the assertion
+    to succeed. This rework changes the body to a ternary so we check for
+    the common-case first, and only then invoke the function implementing
+    the extra functionality of the assertion checks.
+    
+    Define platform_assert_false() with 'noreturn' attribute. Adjust tests
+    accordingly.
+    
+    Rebase v/s main and fix fprintf() bug:
+    Tidy-up the body retaining the dead-code fprintf(), which is still very
+    useful to cross-check that print arguments match print formats in the
+    message. Fix nasty bug in definition of ":"-part of ternary, which
+    caused the supposed-to-be-dead-code fprintf() to always execute.
+    
+    In misc_test, add test_platform_assert_msg() which reduces to just
+    verifying that the user-supplied message is bring printed correctly.
+
+[33mcommit 46b396a70068c79f67a70a25764914e8c06ef8b4[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Mon Jan 24 20:28:46 2022 -0800
+
+    fixup comments in kvstore headers
+
+[33mcommit 9b6a0daa58356e09695316407d2d4ec00e70bbf0[m
+Author: Gabe Rosenhouse <rosenhouse@users.noreply.github.com>
+Date:   Mon Jan 24 22:17:55 2022 -0800
+
+    ci: apply a 25m timeout to all build steps (#221)
+
+[33mcommit 3fce47709ba5cdfe6971a2d55aedc964c3727827[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Mon Jan 24 19:49:41 2022 -0800
+
+    add support for variable-sized values (#186)
+    
+    * add support for variable-sized values
+    
+    * remove btree and fixed_size transition scaffolding
+    
+    * new API for kvstore_lookup
+    
+    * rename variable_length_btree to btree
+
+[33mcommit 4aa3aa5a76b2588a5e4c3e8a66003447a18c0d56[m
+Author: Yizheng Jiao <yizheng@cs.unc.edu>
+Date:   Sat Jan 22 03:47:35 2022 -0500
+
+    pin the memtable in the cache
+    
+    change cache size
+    
+    remove pinned argument in mini_init
+    
+    fix confilt
+
+[33mcommit 0cb45fc9358ad0885bb9b9063b48f118b3a18772[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Fri Jan 14 16:20:04 2022 -0800
+
+    add regression test for space-leak fix
+
+[33mcommit 8b33fd149d33054173790a8a30b99e97f08ffa81[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Thu Jan 20 11:47:50 2022 -0800
+
+    Fix data leak in splinter_dismount
+    
+    Fixes a data leak in `splinter_dismount` where `mini_release` was not
+    called on the trunk `mini_allocator`. This meant that the `next_extent`s
+    were not being deallocated and leaking.
+    
+    Adds `page_type` to the `rc_allocator` logging functionality on `alloc`.
+
+[33mcommit 3674df67d33ea910dfbcda1c558ee11788840a84[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Wed Dec 15 23:08:42 2021 +0000
+
+    (#102) Enhance platform_assert() to print user-supplied msg w/arguments.
+    
+    This commit enhances platform_assert() to optionally take a user-supplied
+    informational message with parameters. This message will be printed when
+    the assertion fails.
+    
+    - In platform_types.h, redefine platform_assert() to become
+      a caller-macro to platform_assert_impl(). This is a new
+      function that checks for the assertion condition. It provides
+      an interface to print the user-supplied informational message
+      with parameters. Redefine macro to fix debug builds.
+    
+    - Rewrite the macro and implementation to -not- use __VA_OPT__.
+      This fails on clang. Fix is to instead work with in-place
+      concatenation of __VA_ARGS__
+    
+    - Provide sibling macro, test_platform_assert() to produce an
+      assertion message to an output buffer. This is used by
+      unit-tests to verify that we will be printing the supplied
+      messages, with appropriate arguments, as needed.
+    
+    - Add CTests file, misc_test.c, with couple of small test cases,
+      to verify platform_assert() interface.
+    
+    - Minor extension to body of platform_assert() to cross-check
+      that the arguments and print-format string match somewhat. If
+      there are wrong parameter types, they will get caught at
+      compile time.
+
+[33mcommit de78c98907649d8839f01ef41710b955b12972a9[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Sat Dec 11 13:20:25 2021 +0000
+
+    (#181) Rework variable_length_btree-test.c to work w/ CTests
+    
+    This commit refactors and ports the existing stand-alone
+    variable_length_btree-test.c to run under the CTests framework.
+    
+    - Break-out common definitions and some inline functions that
+      are shared between .c and test.c code into new private
+      header file, variable_length_btree_private.h
+    - Refactor static inline fns from .c to _private.h to get debug builds working.
+    
+    Two new files are created for those test cases:
+      - variable_length_btree_test.c
+      - variable_length_btree_stress_test.c
+    
+    No new test-code logic is added / changed. Existing test assertions
+    are converted to use CTests-style assertion checking.
+    
+    Shared setup code is refactored into btree_test_common.c/.h
+    Delete older form of standalone unit/variable_length_btree-test.c
+    and rules in Makefile to build that binary.
+    
+    - Some static inline fns from .c that are a "bit too big" are
+      moved to extern functions. Add prototypes in
+      variable_length_btree_private.h
+
+[33mcommit 6f7ae27e3fcfc7cfa96f644a8b880499f35a0add[m
+Author: Gabe Rosenhouse <rosenhouse@users.noreply.github.com>
+Date:   Tue Jan 18 13:46:41 2022 -0800
+
+    ci fixups for rust coverage (#209)
+    
+    * correct debug make target for splinterdb-cli
+    * better variable name for TEST_RUST_CLI in test.sh
+    * misc fixes for CI
+
+[33mcommit f29c0a0f8e556f9236bb8fea3bafd26a7147ac4f[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Fri Jan 14 16:04:49 2022 -0800
+
+    unit tests: use strlen not sizeof on char*
+    
+    fixes warnings from
+    
+       clang-tidy tests/unit/kvstore_basic_test.c '-checks=-*,bugprone-sizeof-expression'
+
+[33mcommit cc839bf0d79ae0dadc8908310a29be6de2ee5b02[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Fri Jan 14 10:26:34 2022 -0800
+
+    Usage docs links to splinterdb-cli as an example program
+
+[33mcommit 767895878a6beb45978a271698043f21e5cdc945[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Thu Jan 13 16:37:28 2022 -0800
+
+    CI pipeline includes rust jobs
+
+[33mcommit 9e914c55a8e26d18a6bbddb0212fbb9532f59e5e[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Thu Jan 13 15:14:44 2022 -0800
+
+    Docker images can build rust
+
+[33mcommit 9dc254caf5901aa817fac4e1f0ae37b1455d2e78[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Thu Jan 13 13:30:35 2022 -0800
+
+    test.sh optionally runs the splinterdb-cli perf tester
+
+[33mcommit f84eea6fa2eb4e0cbeccf9b2581ad57d9a318b53[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Thu Jan 13 14:57:09 2022 -0800
+
+    add make target for the splinterdb-cli
+
+[33mcommit 8396d5910a4de0a528c6b71cd0ce119eeb13c729[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Thu Jan 13 15:42:29 2022 -0800
+
+    update rust bindings
+
+[33mcommit cfc26b084c48d5323d63c2c1ab4d8351eb8ba5c8[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Thu Jan 13 13:30:08 2022 -0800
+
+    rust splinterdb-cli: upgrade clap dependency
+
+[33mcommit 2d4c763a1d894e683316289e712d09a4869c640f[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Thu Jan 13 15:10:10 2022 -0800
+
+    clean up test.sh a bit
+    
+    hardcode some simple things that dont ever vary
+    remove extra echos
+
+[33mcommit c31e30b6eb25dd80e932f4f4deb4ec491623706e[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Thu Jan 13 15:07:47 2022 -0800
+
+    remove phony for non-existent test target
+
+[33mcommit 0bf1fa82fb002973c10aa176ba70279f488392e0[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Thu Jan 13 15:06:00 2022 -0800
+
+    add target for bin/unit_test
+    
+    without this, make clean && make run-tests will fail on the missing target
+
+[33mcommit 418fecad543837cfcd9ea53a20a4d09459eee676[m
+Author: Yizheng Jiao <yizheng@cs.unc.edu>
+Date:   Sun Jan 9 01:39:32 2022 -0500
+
+    rename splinter_deinit to splinter_prepare_for_shutdown
+
+[33mcommit 2cbe4e948b4487b4ab819ba03708762f1c91380d[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Mon Jan 3 18:32:51 2022 +0000
+
+    fix links in usage.md
+
+[33mcommit 03441c2af7154731a9fdb8db48dc749868a068fc[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Fri Dec 10 19:56:29 2021 +0000
+
+    (#171) Rework Makefile rules to build standalone unit-tests
+    
+    This commit refactors slightly the rules for building standalone
+    unit-tests. To simplify usage, the target will be: unit/<program>;
+    i.e. make unit/variable_length_btree-test
+    
+    Refactored rules & targets in Makefile to now support the
+    following:
+    
+     - Build bin/unit_test and each stand-alone unit-test separately
+     - New targets:
+        - tests: Will rebuild only the test code
+        - unit_test: Will rebuild only the unit-test code and
+                each stand-alone unit-test binary
+        - run-tests: Existing target 'test' renamed to this
+        - test-results: Runs all tests and redirects output to
+                a file in current dir named ./test-results.out
+    
+    Following usages work with these changes:
+    
+        $ make clean; make
+        $ make clean; make tests
+        $ make clean; make unit_test
+        $ make clean; make unit/variable_length_btree-test
+        $ make clean; make unit/kvstore_basic_test
+
+[33mcommit 667356eaf8989c9893b531cf3b700c8611b5c9b6[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Fri Dec 3 23:26:56 2021 +0000
+
+    (#167) Rework kvstore_basic_test to run under CTest framework.
+    
+    This commit implements the 1st set of unit-tests [re]written
+    to run under the newly adopted CTest framework.
+    
+    - All existing test cases in tests/kvstore_basic_test.c are
+      rewritten / refactored under two new files:
+        - ctests/kvstore_basic_test.c
+        - ctests/kvstore_large_data_test.c
+    
+    - CTests are built using top-level Makefile, using the
+      bin/ctests target (for now). [ This may be better productized
+      in future to work off of ctests/Makefile. That file should
+      get deleted shortly soon. ]
+    
+    - On Splinter-side, introduce flags to indicate that the KVStore
+      is built, and used, for CTests. (Hard-coded 'ctestsdb' is one
+      such hook.) Informational messages reporting limits, and other
+      things are suppressed under this flag, so that the stdout for
+      ctests execution is noise-free.
+    
+    - The driving binary is generated under bin/ctests.
+    
+    - Extended the interface to support filtering on suite_name and
+      testcase_name. Usage is as follows:
+    
+        sdb-build-mc:[23] $ ./bin/ctests --help
+    ./bin/ctests [ <suite-name> [ <test-case-name> ] ]
+    
+    Address review comments. Rebase v/s main; pick-up new fixes.
+    
+    - Purge files that we pulled from CTests repo but are not used by SplinterDB
+    - Cleanup & simplify README.md contents. Cleanup LICENSE etc.
+    - Relocate ctests/ to tests/unit/ . make target remains bin/unit_test
+    - Rework CTests code to address review comments.
+    - Integrate with fh support for platform logging interfaces
+    - All output will now go to /tmp/unit_test.std{out,err}
+    - Cleanup new fields tracking 'ctests' that were added in initial revs.
+    - Rename kvstore_large_data_test.c kvstore_basic_stress_test.c
+    - Rename db name to unit_tests_db; Define in ctest.h
+    - Various clang-format fixes
+    - Generate bin/unit_test as part of make. Run in CI also.
+    - Add .gitignore rules: Ignore unit_tests_db
+    - Add copyright notice.
+    - Update README.md
+
+[33mcommit 3e99908e783c78a49c8bc1c4831696b331972fc9[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Fri Dec 3 21:28:13 2021 +0000
+
+    (#167) Customize ctest code to conform to SplinterDB coding styles.
+    
+    This commit applies SplinterDB-specific clang-formatting rules.
+    - Specifically, as ctest.h has complicated macros defined in it,
+      suppress clang-format for this file.
+    - Delete C++ code from ctest.h, as we are only doing C-based code/
+      test-dev.
+    - Minor re-indentation of functions and such like in few different
+      files. No ctest code flow logic is changed in this commit.
+    - Add --help usage message.
+
+[33mcommit 6fbb7405bdab67af1c14b86af905236c5d6f76a4[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Fri Dec 3 18:56:23 2021 +0000
+
+    (#167) Integrate initial version of CTest testing framework.
+    
+    This commit simply integrates the core set of 1 .h / .c files that
+    make up the ctest unit-testing framework, with a basic README.md
+    file. Other files found in the ctest repo that are not needed
+    (e.g. Makefile, cpp files etc.) are purged in this commit.
+
+[33mcommit 7e6eb4459e4717c58cda76f7bbe71eac2756a0d2[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Sun Dec 5 03:43:50 2021 +0000
+
+    fix divide-by-zero in splinter_split_leaf
+
+[33mcommit 7431c2502e28ad0ca10514fb9d4f9ea0b7555a5e[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Wed Dec 8 22:18:28 2021 +0000
+
+    include git ref in build artifacts
+
+[33mcommit 0460700fc4913d4a1b09eb80102bbe52834eb7d6[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Wed Dec 8 06:28:16 2021 +0000
+
+    Reorganize test code under tests/; add functional/ subdir
+    
+    This commit gently rearranges existing test code to create space
+    for upcoming CTests unit-tests source files. Existing .c/.h
+    files in tests/ subdir are pushed one level down to functional/
+    subdir. Required updates to path name references in Makefile
+    is done. [ Over time some of the existing functional test files
+    will be refactored into unit-tests in to-be-added unit/ subdir. ]
+    
+    Pick-up clang-format fixes, applied to existing test code, due to
+    file movement.
+
+[33mcommit b888c70659b47cd10c5d667f27b1642f0584d26d[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Tue Dec 7 18:09:10 2021 +0000
+
+    Support managing output file handle(s) for platform logging fns.
+    
+    This commit introduces a small infrastructure to manage the file
+    descriptor where output from platform_log() and platform_error_log()
+    will go to.
+    
+    Add platform_init_log_file_handles(), defined using the
+    "__attribute__ ((constructor))" feature to intialize the global file
+    handles to stdout / stderr, respectively.
+    
+    This change provides the ability to swizzle the output fh for each
+    interface to either /dev/null, or to some user-specified logfile,
+    depending on how the configuration is setup.
+    
+    This change is introduced initially to support CTests. The goal is
+    to leverage this fh swizzling while running CTests to redirect
+    info-msg outputs off of stdout/stderr, so that these messages do
+    not clutter up stdout when running tests.
+
+[33mcommit c4e2c6ed362b89509072c96edaa8b879b5998571[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Wed Dec 1 19:06:02 2021 +0000
+
+    Minor updates to clang-format rules, and coding style changes
+    
+    This commit introduces minor additions to clang-format rules as
+    they are defined in the .clang-format file, which is per v10 of
+    clang-format. Specifically, the couple of new formatting styles
+    introduced by this change are:
+    
+    1. Brace for body of case: statement will begin on a new line,
+       as opposed to being on the same line following the case: LABEL.
+    
+       Rule: The nested definition of "AfterCaseLabel:  true"
+             under BraceWrapping: rules introduces this behavior.
+    
+       New format will be like: (expected to improve readability)
+        case LABEL:
+        {
+            < some code >
+        }
+    
+    2. Multi-line conditional statements for if(), for() or while()
+       will have their start { appear on a new-line indented under
+       the start of the conditional. This improves readability of
+       densely packed if(), for(), while() constructs with muti-line
+       conditional logic tests.
+    
+       Rule: The nested definition of "AfterControlStatement: MultiLine"
+             under BraceWrapping: rules introduces this behavior.
+    
+       New format will be like:
+        if ( < Some long multi-line >
+            && <comment that spills over to new lines> )
+        {
+            < body of block >
+        }
+    
+        NOTE: Single line if(), for() conditionals continue to have the
+              start { follow the conditional on the same line.
+    
+    Additional minor refactoring done:
+     - In few places enclose single-line bodies of if()/else() blocks in { }
+       (All new code should conform to this existing rule.)
+     - In couple of places, enclose sub-parts of complex expressions in ( )
+       to improve readability. (Some of these are superfluous but including
+       them clarifies to the reader exactly the priority of the terms.)
+     - Some refactoring in new BTree code multi-line comment blocks.
+     - Delete blank lines in multi-line prolog, to keep the prolog compact.
+     - Delete blank line between function prolog and start of the function
+       definition. In some places delete blank line between multi-line comment
+       blocks and body of code. Both changes work towards reducing scope for
+       dangling comment blocks, and to ensure that the comment block / prolog
+       is tightly bound to the code-section it refers to.
+
+[33mcommit 7e5e875254a59236550cc8f77f0dbab4d574488e[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Wed Dec 8 09:25:35 2021 -0800
+
+    zap -> dec_ref in variable_length_btree
+
+[33mcommit 744ca215c51e1d77ef9301e880bb9b1aec94f06e[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Wed Dec 8 00:38:04 2021 -0800
+
+    git-clanf-format
+
+[33mcommit 11481016abf9779b397b4ff14eb3e744376c2040[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Tue Dec 7 23:46:33 2021 -0800
+
+    Address many of Alex's comments
+    
+    - change variable_length_btree_init to ..._create
+    - clean up merge iterator's options for merging messages,
+      finalizing updates, and discarding deletes.
+    - re-fix uninitialized memory false positive in laio_cleanup
+    - avoid copy when returning pivot info in variable_length_btree_iterator
+    - strengthen invariant in variable_length_btree_iterator
+    - add convenience macros for printing keys and messages
+    - various comments and clarifications
+
+[33mcommit 1bcdc3ff214b5cd95c2f5af88883727833a32e56[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Sat Dec 4 21:54:05 2021 -0800
+
+    git-clang-format
+
+[33mcommit be78ea70786f0935ada4e430a6da8b2302c4ffa3[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Sat Dec 4 21:47:33 2021 -0800
+
+    bug fixes in mini_allocator and btree_test
+
+[33mcommit 17aa3fba093435f52ae8d7cd229932aa0954960e[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Sat Dec 4 13:06:22 2021 -0800
+
+    fix mini_allocator issue w/ first/last extents
+
+[33mcommit 489b6a01c701a143ac581f9e0fd1743b1f0522eb[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Fri Dec 3 19:58:41 2021 -0800
+
+    restore clockcache RECORD_ACQUISITION_STACKS functionality
+
+[33mcommit 9e6d680d36b88652724941ab3d0c97b8b8aa568b[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Fri Dec 3 16:15:47 2021 -0800
+
+    fixed refcounting bug w/ Alex's help
+
+[33mcommit 13cf49e83cf6f29d58aa3088d806d59e0bcfcbc5[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Fri Dec 3 00:21:52 2021 -0800
+
+    more bugfixes
+
+[33mcommit 29ad69c9b2a8a3d5d9f191073315ea52d899f93b[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Thu Dec 2 22:11:58 2021 -0800
+
+    Switch splinter to new btree and some debugging
+
+[33mcommit c2a11f6ede1ba3f3b76a687856999ce147ee8391[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Thu Dec 2 00:30:28 2021 -0800
+
+    slight optimization(?) to binary search in variable_length_btree
+
+[33mcommit 8cdeae912831f866099a904560999bc347381c38[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Wed Dec 1 23:16:28 2021 -0800
+
+    fix minor bugs to btree perf test runs
+
+[33mcommit 95ac49290d460b52443f671b024a1612b508ea5b[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Wed Dec 1 19:40:34 2021 -0800
+
+    linked into memtable.c and passing btree_test
+
+[33mcommit 1e4004fd69ad9b349ba44cf0547463b2360bf87c[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Mon Dec 6 07:06:32 2021 +0000
+
+    remove unnecessary derive Debug
+
+[33mcommit 61e2894b165baae206aec8863ee20e60b02ad274[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Mon Dec 6 07:03:23 2021 +0000
+
+    add code comments
+
+[33mcommit 98c24260075170fb78d286fc05e7e880cb69e4f5[m
+Author: Gabe Rosenhouse <grosenhouse@vmware.com>
+Date:   Wed Oct 20 21:29:05 2021 +0000
+
+    Add rust libraries and example program
+    
+    - splinterdb-sys: low level, unsafe declarations
+    - splinterdb-rs: higher level, safe wrappers
+    - splinterdb-cli: a simple CLI tool, as an example
+
+[33mcommit 08810f0c3adfcc28b09e51ba83bec7ac0208618b[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Mon Nov 29 11:24:31 2021 -0800
+
+    add plumbing and b-tree for variable-length kvs
+
+[33mcommit 0a9f4832b59a7246e62d93fafe63498c982f8f6f[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Sat Nov 13 11:07:29 2021 -0800
+
+    Removed all fixmes into issues or nothing as appropriate.
+
+[33mcommit 04aa39964ab3526f670c67da9de785c9a657b469[m
+Author: Gabe Rosenhouse <grosenhouse@vmware.com>
+Date:   Fri Oct 29 00:03:09 2021 +0000
+
+    clarify messages vs values
+
+[33mcommit fdac74b9a08da73d78e2e747f3431842f80d2297[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Fri Aug 27 14:11:08 2021 -0700
+
+    Fix race between branch_dec_ref and range_iterators
+    
+    Re-adds coordination between branch_dec_ref and range_iterators. Prior
+    to #65 this was handling by using read/write locks on the meta_page of
+    the meta_head. This is not ideal, because those write locks interfere
+    with tiered memory transactions.
+    
+    Coordination is achieved in this commit by overloading the ref count of
+    the meta head. A range query can "block" dec_refs on the mini_allocator
+    by increasing the ref count and "unblock" by decrementing it again.
+    mini_keyed_dec_ref callers must first wait for the ref count to go to
+    AL_ONE_REF before continuing, after which they are guaranteed that no
+    range queries can intersect their dec_ref range.
+
+[33mcommit 8d57c672d881ccd02ec900089d288db0dbfb5e6c[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Fri Aug 27 11:07:41 2021 -0700
+
+    Move page alloc stats from cache to allocator
+    
+    Breaking out the disk [de]allocation from the cache causes those
+    statistics to be inaccurate. This commit moves them to the allocator,
+    which now tracks extent allocations and deallocations by page_type.
+    
+    Moves cache_assert_noleaks to allocator_assert_noleaks. Puts this check
+    in the destruction phase of splinter_test. The currently passes for
+    functionality and basic, but fails for perf.
+    
+    Adds proper virtualization to rc_allocator.
+
+[33mcommit e99b4cb0ce17ffd143798fc37827ac3d4e8fe695[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Sun Aug 22 08:55:00 2021 -0700
+
+    Mini Allocator Rewrite
+    
+    Adds keyed and unkeyed versions of the mini allocator for the branches
+    and everything else, respectively. Keyed mini allocators pack keys
+    rather than using MAX_KEY_LEN, saving space. Unkeyed mini allocators
+    don't store keys at all.
+    
+    Some minor API changes:
+    The mini_allocator_ prefix is now just mini_.
+    mini_keyed_ and mini_unkeyed_ are used when functions require one or the
+       other.
+    Some unused functions have been removed, minor renaming and parameter
+       reordering for consistency.
+    
+    Unkeyed mini allocators now handle their own ref counts by overloading
+    the meta_head ref count. This replaces awkward external code in several
+    places which did a similar overloading.
+    
+    This breaks two things, one major and one minor:
+    The major break is that range queries and branch destruction can race. A
+       fix is coming in a future commit.
+    The minor break is that it is no longer safe to count the extents in a
+       branch, which was always sketchy because it counted all extents, not
+       just those which are live for the branch.
+
+[33mcommit f55a295940aa1b1706964605ba7fa7b391b07ae1[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Thu Oct 21 15:13:52 2021 -0700
+
+    Updated YCSB trace replayer and new random.[ch]
+    
+    1. Updates the trace replayer (ycsb_test) to generate random data to use
+    on the fly. This reduces the size of traces substantially.
+    
+    2. Replaces random.[ch] with a more flexible framework in order to
+    facilitate (1).
+    
+    3. Includes scripts/run_ycsb.py, a python script to automate running
+    ycsb.
+    
+    Additionally, cleaned up run_ycsb.py:
+    Add command line argument parsing, and reformat to pass pylint.
+
+[33mcommit 810cba98fc382aa0080e9c5af0e6d748b38a5a46[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Wed Oct 20 13:22:48 2021 -0700
+
+    Fix Overfull Leaves on Split
+    
+    1. Tunes the threshold at which a leaf split results in a single leaf
+    from 90% full down to 80% full to prevent overfull leaves from
+    overzealous duplicate estimation.
+    
+    2. Adds an assertion in btree_pack to detect and fail on overfull packs,
+    rather than segfaulting/corruption.
+    
+    Address Reviewer Comments
+    
+    1. Adds inline function and #define to instead of hard-coding the
+    threshold at which a leaf split can output a single leaf.
+    
+    2. Adds some basic statistics for the number of single leaf splits, and
+    the average and maximum number of items in single leaf splits.
+
+[33mcommit 7d608d2ac0b9d2cc8523ca18293ab81e2621e45c[m
+Author: Gabe Rosenhouse <grosenhouse@vmware.com>
+Date:   Fri Oct 22 20:46:58 2021 +0000
+
+    Clean up thread registration/deregistration
+    
+    - task system-managed threads automatically clear tid on exit
+        - tests no longer need to call task_clear_threadid
+    
+    - app-managed threads can call register/deregister to manage
+      scratch space and tid bit
+    
+    fixes crash in 2-thread test case of kvstore_basic
+
+[33mcommit 50165de2ad494fbd45105a0de5aa40541ff07c85[m
+Author: Gabe Rosenhouse <grosenhouse@vmware.com>
+Date:   Fri Oct 22 20:05:31 2021 +0000
+
+    kvstore: better name for task system variable
+
+[33mcommit 6af5760df0d2cc9a54fd2387f0502cc0c0e30445[m
+Author: Gabe Rosenhouse <grosenhouse@vmware.com>
+Date:   Fri Oct 22 05:02:15 2021 +0000
+
+    tidy a bit in task.{c,h}
+    
+    - shrink the public API, moving forward decl from .h to .c
+    - simplify tracking of scratch space
+
+[33mcommit be1120d67608d85406239463a971f542219ea994[m
+Author: Gabe Rosenhouse <grosenhouse@vmware.com>
+Date:   Thu Oct 21 21:29:23 2021 +0000
+
+    remove unused structure
+
+[33mcommit e97e2e09c5da7bb0315a45ea9ea04caef0098068[m
+Author: Gabe Rosenhouse <grosenhouse@vmware.com>
+Date:   Thu Oct 28 16:14:33 2021 +0000
+
+    remove old empty defines
+
+[33mcommit 3625ac3dbdd2520f8b5fe17ecb375d0308e97285[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Thu Oct 21 16:41:11 2021 -0700
+
+    (#106) Add tests for kvstore_iterator() with non-NULL start key
+    
+    This commit adds couple of small test cases to exercise the
+    kvstore_basic_iter_init(), with a non-NULL start_key, to
+    validate that we are correctly positioning the start scan
+    on the requested key. Also, verify that if the specified start_key
+    does not exist that the scan is positioned on the 1st key,
+    if any, after the specified start-key. If start_key is
+    beyond max-key in data set, then iter_init() should
+    basically end up not finding any rows.
+    
+    Minor miscellaneous cleanup:
+     - kvstore_basic_iter_deinit() now takes address of iterator,
+       so it can be Zero'ed out before return.
+     - Mildly refactor existing test cases to consolidate rc handling,
+       and inject PASS / FAILED message lines (for consistency).
+
+[33mcommit 12924570162406c7d2db70762f65459846908277[m
+Author: Gabe Rosenhouse <grosenhouse@vmware.com>
+Date:   Sun Oct 24 05:32:04 2021 +0000
+
+    on arm64, clang does not support march native
+
+[33mcommit 495a2f70039f66e3f74285e69b283bbd14c0e6b6[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Thu Oct 21 13:32:25 2021 -0700
+
+    Add Comment about concurrency to mini_allocator_alloc
+
+[33mcommit f8a48a23563df7b49c394c4f6d550d11448a62ac[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Wed Oct 20 13:35:00 2021 -0700
+
+    Concurrent Mini Allocator Bugfix
+    
+    Threads in the mini allocator can race to obtain and increment
+    mini->meta_tail. This bugfix adds a check that mini->meta_tail has not
+    changed during the get.
+
+[33mcommit e077cc742c29aeb43cab3bc4fa794787db2e33ee[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Wed Oct 20 12:27:44 2021 -0700
+
+    Concurrent clockcache_prefetch bugfix
+    
+    Fixes the index of the retry when clockcache_prefetch races to load a
+    page.
+
+[33mcommit de217a7fcaae5599322fb13ba1384305c156c727[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Wed Oct 6 07:56:44 2021 -0700
+
+    Remove cache_(un)share
+    
+    This commit removes the cache_share and cache_unshare functions. These
+    were used in the memtable, and have been replaced with a simple page
+    allocation.
+    
+    The cache_share and cache_unshare functions were designed to allow a
+    disk address to alias another disk address; i.e. after a share, the
+    second disk address would route to the same entry as the first. However,
+    due to the disk address checking done in cache_get, this alias didn't
+    work and a get to the alias would stall until cache_unshare was called.
+
+[33mcommit be5ca235c59b684768ee29110f9e9a041f6d1aa8[m
+Author: Gabe Rosenhouse <grosenhouse@vmware.com>
+Date:   Wed Oct 20 21:25:10 2021 +0000
+
+    simplify kvstore_basic_test standalone instructions
+
+[33mcommit a2096ce4e27248e59849caf94997c88dee35d91c[m
+Author: Gabe Rosenhouse <grosenhouse@vmware.com>
+Date:   Wed Oct 20 23:20:55 2021 +0000
+
+    enable filter test
+
+[33mcommit 25c803c73c97c2364e4b075dc35ac127b9af0b89[m
+Author: Gabe Rosenhouse <grosenhouse@vmware.com>
+Date:   Wed Oct 13 16:40:58 2021 +0000
+
+    clang-format fixes
+
+[33mcommit 220fc958672b1dd72e80f1123da37756705cec9c[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Wed Oct 13 09:00:13 2021 -0700
+
+    Fix buffer overflows
+    
+    Fixes two buffer overflows.
+    
+    1. test_kvstore_close_and_reopen calloc'd its value buffer using
+    cfg.max_value_size before initializing cfg, resulting in a 0-sized
+    allocation
+    
+    2. kvstore_create_or_open called task_system_create with a
+    scratch_size of 0. In order for the calling thread to be used for
+    SplinterDB functions (maybe just bg tasks?), scratch_size must be set to
+    splinter_get_scratch_size().
+
+[33mcommit 43330a3c975a79efcdcdc58c6a885471c7ebacc0[m
+Author: Gabe Rosenhouse <grosenhouse@vmware.com>
+Date:   Tue Oct 12 22:29:08 2021 +0000
+
+    failing test for lots of data
+
+[33mcommit 268e8ed76669e7d19803b78960be25da8076a10d[m
+Author: Gabe Rosenhouse <grosenhouse@vmware.com>
+Date:   Tue Oct 12 22:28:51 2021 +0000
+
+    kvstore_basic_test: tests can customize config
+
+[33mcommit 2eef9492fbd2fb691b350876544b1741cb3bc428[m
+Author: Aditya Gurajada <agurajada@vmware.com>
+Date:   Tue Oct 5 15:02:52 2021 -0700
+
+    Add limits.h: Rearrange defines for key-/value-size limits; avoid hard-coding.
+    
+    This commit does minor rearrangement of the #defines for key- and value-size
+    limits to remove hard-coded values. No change in logic or existing limits
+    is being done.
+    
+    - Introduce splinterdb/limits.h, where basic limits are #define'ed.
+    - Relocate KVSTORE_BASIC_KEY_HDR_SIZE, KVSTORE_BASIC_MSG_HDR_SIZE from
+      .c to .h file. Adjust corresponding assertions accordingly.
+    - KVSTORE_BASIC_MAX_KEY_SIZE and KVSTORE_BASIC_MAX_VALUE_SIZE are now
+      computed using above defines, rather than hard-coding the limits.
+    
+    - Change error messages to report the key-size / limit and value-size / limit
+      involved when a call fails.
+    
+    - Refactor test cases: Add missing 'free()' calls. Add new ones:
+      - Broke out test_kvstore_basic_large_keys() into:
+         - test_kvstore_basic_key_size_gt_max_key_size()
+         - test_kvstore_basic_value_size_gt_max_value_size()
+
+[33mcommit 6d1a56ac6e43f6f5f71449ee4ff423924f06c3ba[m
+Author: Gabe Rosenhouse <grosenhouse@vmware.com>
+Date:   Wed Sep 29 18:03:44 2021 +0000
+
+    git-clang-format header moves
+
+[33mcommit d199dcdb5e5b91c3b781f79e44be2644ddc9bf22[m
+Author: Gabe Rosenhouse <grosenhouse@vmware.com>
+Date:   Wed Sep 29 04:36:46 2021 +0000
+
+    Move public API headers to ./include/splinterdb
+    
+    - Conventional in other C projects
+    - Simplify "make install" target
+    - Update build steps for kvstore_basic_test
+
+[33mcommit 03a3c5385218283047d0c086e7d8b69bdad51456[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Thu Aug 26 07:14:33 2021 -0700
+
+    Virtual clockcache functions
+    
+    Implements virtual function wrappers for clockcache to plug into
+    cache.h's cache_ops. This fixes a known issue where the prior casting
+    approach could potentially lead to undefined behavior depending on
+    compiler.
+
+[33mcommit 00f7be0f0bfb92d9a293a78c595d1beccc3f499a[m
+Author: Gabe Rosenhouse <grosenhouse@vmware.com>
+Date:   Wed Sep 29 17:48:37 2021 +0000
+
+    tidy up remaining range delete stuff
+
+[33mcommit 44896379474ed0fa3da94f1030b36835ca91bde4[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Wed Sep 29 10:21:51 2021 -0700
+
+    Clang Format: Do not sort #includes alphabetically
+
+[33mcommit 74336824db673d96a77461971b68902e877176c1[m
+Author: Gabe Rosenhouse <grosenhouse@vmware.com>
+Date:   Wed Sep 29 04:30:03 2021 +0000
+
+    update usage docs
+    
+    reflects recent changes
+    - updated kvstore_basic api
+    - new static library
+    - new locations of libraries and headers in docker image
+
+[33mcommit 0190d22205d2912d9f7b609aacbd72d917904e20[m
+Author: gapisback <agurajada@vmware.com>
+Date:   Thu Sep 23 03:58:49 2021 +0000
+
+    Update Makefile to add lib/ dir. Rename artifacts to libsplinterdb.{so,a}.
+    
+    This commit updates Makefile rules to:
+     - Create lib/ dir
+     - Artifacts produced are renamed: splinterdb.so -> libsplinterdb.so
+     - make will now also produce lib/libsplinterdb.a
+     - Cleaned up code under 'make install' to install .a, .so to appropriate
+       system lib-dirs (/usr/local/lib).
+     - Interface .h files installed at /usr/local/include/splinterdb/
+    
+    (Gabe Rosenhouse) Fix up rules in Dockerfile, to account for new
+     location of .so /.a
+    
+    Makefile changes produce .so / .a artifacts in new lib/ dir.
+    Accordingly adjust rules in Dockerfile, to work with new location
+    and names.
+    Changes address issue #75: https://github.com/vmware/splinterdb/issues/75
+
+[33mcommit 97b00cf2fbf1670da06a27094cc3eb8ff5a30ae6[m
+Author: Gabe Rosenhouse <grosenhouse@vmware.com>
+Date:   Mon Sep 20 04:23:01 2021 +0000
+
+    fixup example code for kvstore iterators
+
+[33mcommit ae33dfe2ee5370431bb56264ea4366ed0bfdbeb3[m
+Author: Gabe Rosenhouse <grosenhouse@vmware.com>
+Date:   Fri Sep 17 02:07:11 2021 +0000
+
+    kvstore_basic: support close & re-open
+
+[33mcommit 58fd52f1c5cb7b18cd3944cd9d5e2f34080c0bfc[m
+Author: Gabe Rosenhouse <grosenhouse@vmware.com>
+Date:   Sun Sep 19 04:35:43 2021 +0000
+
+    kvstore: support close & re-open of data on disk
+    
+    - Closing the kvstore will now dismount instead of destroying
+    - That will leave the data intact
+    - May be subsequently re-opened with kvstore_open()
+
+[33mcommit 5cbfdcc6b5ed0ef3345d1a9eb4f7504863f57bf9[m
+Author: Gabe Rosenhouse <grosenhouse@vmware.com>
+Date:   Sun Sep 19 04:30:23 2021 +0000
+
+    document kvstore_register_thread
+
+[33mcommit 33af278daaf7f73005674567813729d95882debe[m
+Author: Gabe Rosenhouse <grosenhouse@vmware.com>
+Date:   Sun Sep 19 04:21:12 2021 +0000
+
+    s/kvstore_init/kvstore_create/
+
+[33mcommit 23ce2af9a3e4cdf4a603a64cf9f464d541d0830c[m
+Author: Gabe Rosenhouse <grosenhouse@vmware.com>
+Date:   Sun Sep 19 04:19:32 2021 +0000
+
+    docstrings for splinter_{mount,dismount,destroy}
+
+[33mcommit 58b3fb10be0003abe4949bc9ef444259af7a0d1b[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Thu Sep 16 14:50:09 2021 -0700
+
+    compile on arm64
+
+[33mcommit 8acb804a5bdbcad9254e44fcd5e57176c12773f3[m
+Author: Gabe Rosenhouse <grosenhouse@vmware.com>
+Date:   Fri Sep 17 23:00:02 2021 +0000
+
+    fix gcc warning about misleading indentation
+
+[33mcommit 8a0062c3e8bd1b066f451093132bce5084f58700[m
+Author: Gabe Rosenhouse <grosenhouse@vmware.com>
+Date:   Thu Sep 9 17:22:49 2021 +0000
+
+    kvstore_basic_test: can be a standalone example
+
+[33mcommit d5efce02dfb7e0869423dba8ee176d7620575ac1[m
+Author: Gabe Rosenhouse <grosenhouse@vmware.com>
+Date:   Thu Sep 9 17:22:24 2021 +0000
+
+    Docker image has libsplinterdb.so in a sensible location
+
+[33mcommit b3ba9f5bccea171c450ea6c85bdf38d6719c62c1[m
+Author: Gabe Rosenhouse <grosenhouse@vmware.com>
+Date:   Thu Sep 9 17:04:59 2021 +0000
+
+    kvstore_basic API is usable from docker container
+
+[33mcommit 24d3f2b8f3014112106050d6aeaa52edab864906[m
+Author: Yizheng Jiao <yizheng@cs.unc.edu>
+Date:   Sat Sep 11 13:58:11 2021 -0400
+
+    minor fix
+
+[33mcommit 2cf638b3c86819a19330accbe48331f0253ba8c5[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Wed Sep 8 16:54:11 2021 -0700
+
+    format-check uses git-clang-format-10
+
+[33mcommit 130e5512606b3aa73f24304843590c378e61415b[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Wed Sep 8 14:28:26 2021 -0700
+
+    format-check against main by default
+
+[33mcommit 080c2ad34f1b45885d23cfca1133342d1cf4db0b[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Wed Sep 8 10:24:23 2021 -0700
+
+    docs refactor / simplify README
+    
+    New files:
+      docs/build.md: from-source building, previously in README.md
+      docs/usage.md: how to use SplinterDB in an application
+      scripts/README.md: note about config for those scripts
+
+[33mcommit 9646733e516cd10560aaf3bf2c31e88d41460753[m
+Author: Carlos Garcia-Alvarado <cgarciaalvar@cgarciaalva-a01.vmware.com>
+Date:   Tue Sep 7 10:08:47 2021 -0700
+
+    Add logo to the SplinterDB project
+
+[33mcommit c9c241dbb1521401e0e2d9e1d9ea375080dc5c4c[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Wed Sep 1 17:48:06 2021 -0700
+
+    readme: updates to docker build from local source
+
+[33mcommit 0b92f51cd77297c71401d8e7cbde794b502916f4[m
+Author: Yizheng Jiao <yizheng@cs.unc.edu>
+Date:   Fri Sep 3 14:37:51 2021 -0400
+
+    fix  git-clang-format main --diff
+
+[33mcommit 84a6a305e034a24029276a89b425f2b13c73f5d1[m
+Author: Yizheng Jiao <yizheng@cs.unc.edu>
+Date:   Thu Sep 2 19:02:41 2021 -0400
+
+    use git-clang-format
+
+[33mcommit e26ef7a95347ed393502eb1c68990c2905e47e29[m
+Author: Yizheng Jiao <yizheng@cs.unc.edu>
+Date:   Thu Sep 2 18:34:39 2021 -0400
+
+    remove space and unneeded definitions for mutex and spin_lock functios
+
+[33mcommit d30e754d2add2cc744fb638b8c95794277d246e7[m
+Author: Yizheng Jiao <yizheng@cs.unc.edu>
+Date:   Thu Sep 2 17:59:40 2021 -0400
+
+    use spinlock for incorporation_lock
+
+[33mcommit 0c3d04947af4ad8f6ba86bc62ca93aeea35630e0[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Thu Aug 26 06:58:02 2021 -0700
+
+    Remove Range Delete Scaffolding
+    
+    Removes structs, functions and other code related to range delete. Range
+    delete was implemented by a different group and is not functional on
+    this fork. We do not plan to follow their implementation if we implement
+    it here.
+
+[33mcommit 371a9b6800400e483b793c1864dea7dd6bd7c100[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Thu Aug 26 07:00:16 2021 -0700
+
+    Clang-format: put declaration return types on new line
+
+[33mcommit baef765dc8417ea79062982f8c772d1c65403bcb[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Tue Aug 24 17:09:02 2021 +0000
+
+    add kvstore_basic, simpler API
+
+[33mcommit 2d4cca6bfdf5287f207a669757fb2cff8c19b709[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Tue Aug 24 17:06:12 2021 +0000
+
+    kvstore: allow app to override min_key and max_key
+
+[33mcommit 782d9c91a867b91d9f17036bd686e5e5c6703ed5[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Tue Aug 24 17:03:21 2021 +0000
+
+    data_config gets an user-provided pointer
+    
+    applications can use this to stash data they want to make accessible to the key comparator
+
+[33mcommit 6562b6f32a109dafd7f5f9cce08286bfc9639479[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Fri Aug 20 04:52:40 2021 +0000
+
+    util function for hex encoding
+
+[33mcommit af32f266f65470dd4c24f439a54c7715ba8a5593[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Fri Aug 20 04:46:30 2021 +0000
+
+    minor cleanup: logging, docstrings, headers
+
+[33mcommit 022e1dcc808ef45050cc1dc0bda5efa786aeb789[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Fri Aug 20 04:45:41 2021 +0000
+
+    poison calloc
+
+[33mcommit b02c980c54e4e7170296af5e44c19cc0589e55d3[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Wed Aug 11 02:44:10 2021 +0000
+
+    make install renames shared lib
+
+[33mcommit d9fc0a2dd108f3b1b790d7850efa22b7bf0848e3[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Tue Aug 17 05:42:49 2021 -0700
+
+    Separate Disk Allocation from Cache Allocation
+    
+    Breaks out the disk allocation from cache_alloc.
+    
+    The new API for cache_alloc takes a disk_addr and returns a new
+    write-locked page.
+    
+    Allocation now happens in two steps:
+    1. Allocate a new disk_addr using allocator_alloc_extent or
+     mini_allocator_alloc.
+    2. Allocate a new page for disk_addr using cache_alloc
+    
+    Additionally, clean up and reformat cache.h and other affected files
+
+[33mcommit b08aad86e7289c53bd69a0bf358fda98a345c5fe[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Tue Aug 24 15:49:48 2021 +0000
+
+    btree: respect max_key config
+
+[33mcommit 1765ca60f6a3db7d0507070dae164eab51ab6834[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Thu Aug 19 18:25:28 2021 +0000
+
+    kvstore: document and test with const buffers
+
+[33mcommit 1c12dcdb7c4b5b308db6af7c29133a22ee7edad5[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Thu Aug 19 18:18:05 2021 +0000
+
+    kvstore: cosmetic fixups
+
+[33mcommit 33b184c5474bde8e785c26db6b0f5edd18e7e757[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Tue Aug 17 04:49:24 2021 +0000
+
+    Add iterator to kvstore
+    
+    Also: simplify kvstore opaque type
+
+[33mcommit e6028e5518801c6269ec1b74e3fe33b9f1349aaf[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Tue Aug 17 05:00:00 2021 +0000
+
+    kvstore: fix docs re: error codes
+
+[33mcommit 5a5244a05e9bbae42b67f7302a1c1f3cb7b12c31[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Tue Aug 17 04:06:03 2021 +0000
+
+    kvstore_test: snake_case
+
+[33mcommit 2a6cecca327246cb67c6b8378075839c158ed39c[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Tue Aug 17 23:26:05 2021 +0000
+
+    kvstore.h: document lookup parameter directions
+
+[33mcommit cc1368747380e9e54d33eeceac01649b3615319c[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Mon Aug 16 23:16:28 2021 +0000
+
+    run log_test in CI
+
+[33mcommit 065ca86e49300ce709d34f04cc89bc59d4cf56f5[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Mon Aug 16 23:16:08 2021 +0000
+
+    remove commented-out code
+
+[33mcommit d1c66349bc859e9a4cea9a33692f517ae8f53dc0[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Tue Aug 17 21:24:30 2021 +0000
+
+    Simplify CI pipeline a bit
+    
+    - Single build env image with both gcc and clang installed
+    - No more task files, instead use ytt template functions
+    - No longer depend on on-lived ci-config branch
+
+[33mcommit c8bc1ca9421209382fea57412de92281bd7bf035[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Tue Aug 17 20:55:07 2021 +0000
+
+    fix up format-check to handle older clang-format
+
+[33mcommit e23c52a839581d8f566b5af3c838afd221a56afe[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Tue Aug 17 18:33:10 2021 +0000
+
+    Use default clang that comes with ubuntu
+    
+    Consolidate build environment into a single docker image with both GCC
+    and clang
+
+[33mcommit 949d2b1587ff2aa589370d8acb19fc8e695aebd0[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Mon Aug 16 16:49:46 2021 +0000
+
+    ci: test debug build on main
+
+[33mcommit b37731ee9a08c046f33ef9c30b92ead6b1dd5bdb[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Mon Aug 16 16:32:07 2021 +0000
+
+    ci: extract commit status reporting function
+
+[33mcommit a4a3b4df6550054b11d9111a925e5fe501be2e48[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Fri Aug 13 06:02:03 2021 +0000
+
+    ci: add checks for debug build
+
+[33mcommit 1b2aed208ab435fc41579f0fe65d8341f1ea50bc[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Sat Aug 14 09:11:03 2021 -0700
+
+    Remove Bad Cache Assert in Prefetch
+    
+    Removes a debug_assert in clockcache_prefetch_callback which mistook the
+    iov_base field in struct iovec for the file offset (disk_addr in our
+    terminology), when it in fact points to the buffer.
+
+[33mcommit f1dea521ffbec6c109676edcbcbabbe8b232358f[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Tue Aug 10 22:50:28 2021 +0000
+
+    platform_public is usable from C++ application
+
+[33mcommit 4f122892edd35d6b4f91b10a51b8defa46b68467[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Tue Aug 10 22:49:26 2021 +0000
+
+    make install target
+
+[33mcommit 6d306cc107bb0b7e5f913a230a639e3029c27db3[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Tue Aug 10 18:43:25 2021 +0000
+
+    simplify platform_status_to_int()
+
+[33mcommit eac46b2c81c558aece0a0086bb6acc300d21033d[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Tue Aug 10 04:30:11 2021 +0000
+
+    kvstore: public api returns useful errno-type ints
+
+[33mcommit 1afbbafd576414ffd25bea0c025769440b125153[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Tue Aug 10 04:27:40 2021 +0000
+
+    kvstore: convert all camelCase to snake_case
+
+[33mcommit 5cf7f1f5a3bec91d44b952896ebc375c503d1db5[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Tue Aug 10 04:19:38 2021 +0000
+
+    kvstore: accept data_config object as-is
+    
+    rationale: we're treating data.h as part of the public API
+    and the data_config struct exists and fits the use-case well.
+
+[33mcommit 42bedc7076a305536f5d384575787f3f1d13071c[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Tue Aug 10 03:47:44 2021 +0000
+
+    kvstore public api: snake_case instead of camelCase
+    
+    Standardizes it with the rest of the codebase
+
+[33mcommit 4e03b08e048bb21d46f2a60eb1e9bbd1c0c2311d[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Tue Aug 10 03:23:03 2021 +0000
+
+    clang-format kvstore code and test
+
+[33mcommit 6f17e63cbeb970e9e37ec3834524cbd4601ddacb[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Sat Aug 7 04:00:31 2021 +0000
+
+    ci: improvements and refactors
+    
+    For every pull request:
+    - clang format any changed C source
+    - shellcheck and shfmt any changed shell scripts
+    - report status on the PR separately for each check
+    
+    Concourse config:
+    - refactor to have more, but smaller jobs
+    - DRY up pipeline using ytt templating
+    - extract common pipeline tasks as files
+    - all yaml files valid according to the yamllint
+
+[33mcommit 5e1b09be566f584e6471205818afcc4f270ff287[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Mon Aug 9 13:54:53 2021 -0700
+
+    Addressing Rob's Comments
+    
+    This adds an assertion and doesn't no retry a prefetch when the page is
+    being loaded by another thread.
+
+[33mcommit 593785f8f1d4989a6b8de662a7155ae87d2c4815[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Mon Aug 9 09:54:45 2021 -0700
+
+    Fixing Format Errors
+
+[33mcommit 4d277e8828d506ff55861ffd51a9e95ffb5c6389[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Wed Aug 4 11:42:39 2021 -0700
+
+    Fixing calls to cache_prefetch
+    
+    This commit changes all calls to cache_prefetch to match the current
+    API.
+
+[33mcommit a1698567b494bc601e46ff9124744913b4b5faf9[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Mon Aug 2 14:47:07 2021 -0700
+
+    Clean up clockcache_prefetch
+    
+    This commit resolves several outstanding issues with
+    clockcache_prefetch.
+    
+    1. clockcache_prefetch used to only check that the first page of an
+       extent was in cache. Now it checks every page.
+    2. clockcache_prefetch doesn't set the page_type of the entries
+       correctly; this is fixed through an API change.
+    3. clockcache_prefetch would fetch every page in the extent if the first
+       page was out of cache, regardless of whether they were in cache. Now
+       only pages out of cache are fetched in contiguous IOs.
+    4. Basic stats on prefetching and writing are implemented.
+
+[33mcommit 07c0e300e798e803d76157d2577f39bf8a958e23[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Mon Aug 9 18:08:55 2021 +0000
+
+    shell formatting: add .editorconfig
+    
+    Used by shfmt tool to check formatting of shell scripts in CI
+
+[33mcommit 4fe20aafd3846c80a774295a992b8b5121e57bf7[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Mon Aug 9 19:11:36 2021 +0000
+
+    Remove capability stuff for CAP_IPC_LOCK
+    
+    Unnecessary since 912786eb made mlock() opt-in
+
+[33mcommit f49b0019fec959985d783d9e9322514ffec9091e[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Tue Aug 3 01:57:37 2021 +0000
+
+    Docker and CI builds include headers for kvstore api
+
+[33mcommit 7608b66191e17ceecd0f2dd4ef524c47499eea6e[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Mon Aug 2 22:06:36 2021 +0000
+
+    data.h and kvstore.h don't depend on platform.h
+    
+    extract common typedefs into platform_public.h
+
+[33mcommit cb169fdeb537aaaff499b287540e63313a3741d7[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Sun Aug 8 18:01:43 2021 +0000
+
+    remove sleep script
+
+[33mcommit 774f7bb86ebd2a495913d22dfabf6c75e6f7306a[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Mon Aug 9 10:03:49 2021 -0700
+
+    Minor Changes to .clang-format
+    
+    Enables indentation for switch labels
+    
+    Disables argument bin packing
+
+[33mcommit dd4af5020b813f852affc44233c676f36686c126[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Mon Aug 9 14:39:17 2021 +0000
+
+    readme: add atc20 presentation link
+
+[33mcommit dce0dcf0dab70f469e96186b6ec4757df676fde8[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Sat Aug 7 06:10:54 2021 +0000
+
+    format-check.sh script
+    
+    - runs git-clang-format
+    - can run as a pre-commit hook
+    - can also be called from CI
+
+[33mcommit 0db9e8024336c2822936419ac7db83cc849778fc[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Sat Aug 7 06:12:03 2021 +0000
+
+    Contributing doc: make test and format-check
+
+[33mcommit b239791433770fb27d4a251fd7761c38a96aaf39[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Mon Aug 9 00:28:09 2021 +0000
+
+    Build env image: fixup formatter deps
+    
+    Signed-off-by: Gabriel Rosenhouse <grosenhouse@vmware.com>
+
+[33mcommit a47a2c97b711d21777c6ba4dab9ecfe3761fe9af[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Sun Aug 8 17:16:16 2021 +0000
+
+    dockerfile: add linters and formatters
+    
+    ensures that tools are available for local development and CI
+    - shfmt for shell formatting
+    - shellcheck for shell linting
+    - clang-format for C
+    - yamllint for yaml CI config files
+    
+    Signed-off-by: Gabriel Rosenhouse <grosenhouse@vmware.com>
+
+[33mcommit ccbba3b43e6f71fbe94a2ff427f39d774f597981[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Sat Aug 7 02:52:24 2021 +0000
+
+    Add .clang-format
+    
+    Signed-off-by: Alex Conway <aconway@vmware.com>
+    Signed-off-by: Gabriel Rosenhouse <grosenhouse@vmware.com>
+
+[33mcommit a80934b5dc2dafe81529c779580255b623dc5fcd[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Wed Aug 4 11:50:43 2021 -0700
+
+    Added attribution to RadixSort
+
+[33mcommit bbd976e7685dbf7cd14f7396c31e3d07721f754f[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Sun Aug 1 19:28:23 2021 -0700
+
+    Adding splinter_test --perf to CI
+
+[33mcommit 912786ebfa4ca07dd7f2b4bb7abc0ab5023a6c6c[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Sun Aug 1 18:08:22 2021 -0700
+
+    Add config options for hugetlb and mlock
+    
+    This commit adds config options to add/remove the MAP_HUGETLB flag to
+    the mmap in platform_buffer_create and to enable/disable the mlock. It
+    sets both options off by default.
+
+[33mcommit c236ced9c8ef104be3eddfc20a3622833e4551c3[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Fri Jul 30 14:04:16 2021 -0700
+
+    Clean up splinter_test --perf and add io_stats
+    
+    This commit removes the hardcoded hack script for calculating effective
+    bandwidth from splinter_test --perf. It implements a new cache API
+    function cache_io_stats which returns the nubmer of bytes read and
+    written.
+
+[33mcommit cf61861b86eb58647111f01a61f90b4682edf7fc[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Fri Jul 30 12:27:53 2021 -0700
+
+    CI for both gcc-9 and clang-12
+    
+    - Validate main branch and PRs against both compilers
+    - Publish images for both from main
+    
+    For compiler in {gcc-9, clang-12} we now publish
+      splinterdb:$compiler
+      splinterdb:$compiler-$git_sha
+      splinterdb:latest is an alias for $compiler=gcc-9
+    
+      build-env:$compiler
+      build-env:$compiler-$git_sha
+      build-env:latest is an alias for $compiler=gcc-9
+    
+    Image run-env is unchanged, since it doesn't depend on the compiler
+    
+    Common Concourse tasks are extracted from pipeline into files
+    
+    Tracking those tasks via a dedicated branch ci-config so that they
+    can change rapidly without creating noise on main
+
+[33mcommit 06aa17b20ba704fe7b5ecc8285fb7a13bdf3e8d7[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Fri Jul 30 19:10:11 2021 +0000
+
+    One last fix for compiling with gcc
+    
+    Signed-off-by: Gabriel Rosenhouse <grosenhouse@vmware.com>
+
+[33mcommit 174bacde81015ce77369009d447926fadfc0435e[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Fri Jul 30 12:10:34 2021 -0700
+
+    Wrapped clang memory-sanitizer attributes in protective macros
+
+[33mcommit 174446d61f4ba4d351e6e3ad6a3d8c298f568c71[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Fri Jul 30 17:00:41 2021 +0000
+
+    build-env dockerfile: configurable compiler
+
+[33mcommit e3dbe6f0759306b552d38bfe2917bde188fe6cdb[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Fri Jul 30 16:55:37 2021 +0000
+
+    dockerfiles: use apt-get instead of apt
+    
+    fixes warning about 'apt does not have a stable CLI interface. Use with caution in scripts'
+
+[33mcommit 1e9a37d26909fcd69fc521d2e7e332d8f79bb1a8[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Thu Jul 29 21:50:25 2021 -0700
+
+    Minor Makefile Fix for gcc/ld Compatibility
+    
+    gcc/ld require libraries to be listed after object during linker
+    invocation
+
+[33mcommit 43a958f8f16e5f585b489025e285a93a57434d98[m
+Author: Rob Johnson <rob@robjohnson.io>
+Date:   Thu Jul 29 14:45:53 2021 -0700
+
+    fix some gcc compilation errors
+
+[33mcommit f9a3d767f26a4521e83c61657b1abb639862e7c8[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Thu Jul 29 10:38:46 2021 -0700
+
+    CI credentials tied to bot account
+    
+    Signed-off-by: Gabriel Rosenhouse <grosenhouse@vmware.com>
+
+[33mcommit 8dd46994de65c389d1d91029bbb17f0be5749ca7[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Wed Jul 28 20:52:47 2021 -0700
+
+    Readme updates with docker workflows
+
+[33mcommit 4fb58e08a3df66b1c3011230c49c4e56ae147dd7[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Wed Jul 28 14:17:12 2021 -0700
+
+    Concourse CI builds and pushes a splinterdb container image
+    
+    - Successful commits to main will push to
+        projects.registry.vmware.com/splinterdb/splinterdb:latest
+    - CI uses the Dockerfile as the source of truth for building
+    - Pushed image contains only the binaries and runtime dependencies
+    - PR checking does the same as main, without pushing the image anywhere
+
+[33mcommit 6d3e4818991f80940d18bd8163c4b96fe7040bbf[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Wed Jul 28 13:58:57 2021 -0700
+
+    Builds: split out separate run-env container image
+    
+    Signed-off-by: Gabriel Rosenhouse <grosenhouse@vmware.com>
+
+[33mcommit 9b26495d2759d15dae5f4fd611b1d00d1cfc6d96[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Wed Jul 28 18:13:41 2021 +0000
+
+    kvstore_test: key size based on kvsCfg
+    
+    Signed-off-by: Gabriel Rosenhouse <grosenhouse@vmware.com>
+
+[33mcommit 6d4e88540789c67dadf8d2fc78b63e225693f88d[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Thu Jul 22 05:38:37 2021 +0000
+
+    basic functional test of kvstore
+    
+    to run:
+      make && sudo make setcap && bin/driver_test kvstore_test
+
+[33mcommit 36273656fa64fd5d05770bc45ad93c0c9043fda5[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Tue Jul 27 18:51:07 2021 +0000
+
+    Concourse pipeline runs simple test script
+    
+    Signed-off-by: Gabriel Rosenhouse <grosenhouse@vmware.com>
+
+[33mcommit ddab5fd0f972774038a65a1ec5681b32723d7a91[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Tue Jul 27 03:15:00 2021 +0000
+
+    Document simple steps for running tests
+    
+    - make test on Linux
+    - docker build / docker run elsewhere
+    
+    Signed-off-by: Gabriel Rosenhouse <grosenhouse@vmware.com>
+
+[33mcommit 44471a1b18b99fa1240e6dbf775bb8392061c710[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Wed Jul 21 21:36:46 2021 +0000
+
+    remove early return from cache test
+    
+    Signed-off-by: Gabriel Rosenhouse <grosenhouse@vmware.com>
+
+[33mcommit c510d71fe09ed2f360e4ff3a86c74bc674156092[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Sat Jul 24 20:16:59 2021 -0700
+
+    Fix Broken Debug Build
+    
+    The debug build was setting DEBUG rather than SPLINTER_DEBUG. This
+    commit fixes that and fixes some issues with the Makefile.
+
+[33mcommit 2f3ea6335deca2a06eee29a63304a7ee0e721626[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Mon Jul 26 15:17:08 2021 -0700
+
+    Set env var for CC and LD in build image
+    
+    Signed-off-by: Gabriel Rosenhouse <grosenhouse@vmware.com>
+
+[33mcommit f5cf9c37abc9f824f8d62968dba760b5a1752ce3[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Thu Jul 22 17:09:10 2021 -0700
+
+    Concourse CI pipeline
+    
+    Checks commits to `main` and PRs, and sets status.
+    
+    VMware employees can see details via Runway (VMware's internal Concourse)
+    
+    This is a stopgap, while we wait for GitHub Actions to get enabled.
+    
+    Signed-off-by: Gabriel Rosenhouse <grosenhouse@vmware.com>
+
+[33mcommit 6e232b36a1642bb710009ec199081d00d02c9266[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Mon Jul 26 14:03:01 2021 -0700
+
+    update gitignore
+    
+    Signed-off-by: Gabriel Rosenhouse <grosenhouse@vmware.com>
+
+[33mcommit 44475dd2292ad6559b1ad3d83866680e92f3a306[m
+Author: Gabriel Rosenhouse <grosenhouse@vmware.com>
+Date:   Mon Jul 26 14:00:27 2021 -0700
+
+    readme fixups
+    
+    Signed-off-by: Gabriel Rosenhouse <grosenhouse@vmware.com>
+
+[33mcommit 95d5ac7f90813b307654beca5caf78ae31198864[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Sun Jul 18 13:48:36 2021 -0700
+
+    fixed default config
+
+[33mcommit 6e7b813fbbde9e83f409616435ec25e50512352b[m
+Author: Alex Conway <aconway@vmware.com>
+Date:   Tue Jul 6 18:45:38 2021 -0700
+
+    Added attribution for PackedArray
+
+[33mcommit f94168143ca2908b53919e2f6345e6939da36a5c[m
+Author: Carlos Garcia-Alvarado <cgarciaalvar@cgarciaalva-a01.vmware.com>
+Date:   Mon Jul 12 12:31:28 2021 -0700
+
+    Initial SplinterDB Commit
+
+[33mcommit 17070313aa5f389a76fade1d43994c3a335d3a41[m
+Author: VMware GitHub Bot <ospo-github-admins@vmware.com>
+Date:   Tue Jul 13 03:10:32 2021 +0800
+
+    Adding .gitignore template
+
+[33mcommit 1b0efe9372a5b4828985793b9f7b80f7f3924cfa[m
+Author: VMware GitHub Bot <ospo-github-admins@vmware.com>
+Date:   Tue Jul 13 03:10:32 2021 +0800
+
+    Add Code of Conduct template
+
+[33mcommit 2981e1b8119d2041c28fd97221f94a8d46ed4712[m
+Author: VMware GitHub Bot <ospo-github-admins@vmware.com>
+Date:   Tue Jul 13 03:10:31 2021 +0800
+
+    Add README template
