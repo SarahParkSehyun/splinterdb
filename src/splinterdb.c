@@ -479,7 +479,6 @@ splinterdb_close(splinterdb **kvs_in) // IN
    *kvs_in = (splinterdb *)NULL;
 }
 
-
 /*
  *-----------------------------------------------------------------------------
  * splinterdb_register_thread --

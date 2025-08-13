@@ -351,7 +351,8 @@ clockcache_extent_size(const clockcache *cc)
 void
 clockcache_wait(clockcache *cc)
 {
-   io_cleanup(cc->io, CC_DEFAULT_MAX_IO_EVENTS);
+   // io_cleanup(cc->io, CC_DEFAULT_MAX_IO_EVENTS);
+   io_cleanup(cc->io, 0);
 }
 
 
@@ -901,6 +902,7 @@ clockcache_write_callback(void *wbs)
  *      they are not.
  *----------------------------------------------------------------------
  */
+
 void
 clockcache_batch_start_writeback(clockcache *cc, uint64 batch, bool32 is_urgent)
 {
@@ -994,7 +996,6 @@ clockcache_batch_start_writeback(clockcache *cc, uint64 batch, bool32 is_urgent)
                                   addr);
             io_async_state_append_page(state->iostate, next_entry->page.data);
          }
-
          io_async_run(state->iostate);
       }
    }
@@ -2454,6 +2455,7 @@ clockcache_prefetch(clockcache *cc, uint64 base_addr, page_type type)
          cc->stats[tid].page_reads[type] += count;
          cc->stats[tid].prefetches_issued[type]++;
       }
+
       io_async_run(state->iostate);
       state = NULL;
    }

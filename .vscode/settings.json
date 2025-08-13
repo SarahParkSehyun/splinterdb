@@ -6,6 +6,7 @@
     "ostream": "c",
     "fcntl.h": "c",
     "string_view": "c",
-    "liburing.h": "c"
+    "liburing.h": "c",
+    "msan_interface.h": "c"
   }
 }

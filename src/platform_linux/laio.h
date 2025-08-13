@@ -30,8 +30,10 @@ typedef struct io_uring_context {
    platform_heap_id heap_id;
 } io_uring_context_t;
 
+
 typedef struct io_process_context {
    pid_t              pid;
+   threadid           tid;
    uint64             thread_count;
    bool32             shutting_down;
    uint64             io_count; // inflight ios
