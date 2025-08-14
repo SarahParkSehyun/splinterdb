@@ -23,7 +23,7 @@
 #define LAIO_DEFAULT_PAGES_PER_EXTENT 32
 #define LAIO_DEFAULT_EXTENT_SIZE                                               \
    (LAIO_DEFAULT_PAGES_PER_EXTENT * LAIO_DEFAULT_PAGE_SIZE)
-
+typedef struct uring_handle uring_handle;
 
 typedef struct io_uring_context {
    struct io_uring  ring;
@@ -37,10 +37,13 @@ typedef struct io_process_context {
    uint64             thread_count;
    bool32             shutting_down;
    uint64             io_count; // inflight ios
+   threadid           cleaner_tid;
+   uint32             slot_idx;
    io_context_t       ctx;
    pthread_t          io_cleaner;
    async_wait_queue   submit_waiters;
    io_uring_context_t uring_ctx;
+   uring_handle      *parent;
 } io_process_context;
 
 

@@ -351,8 +351,8 @@ clockcache_extent_size(const clockcache *cc)
 void
 clockcache_wait(clockcache *cc)
 {
-   // io_cleanup(cc->io, CC_DEFAULT_MAX_IO_EVENTS);
-   io_cleanup(cc->io, 0);
+   io_cleanup(cc->io, CC_DEFAULT_MAX_IO_EVENTS);
+   // io_cleanup(cc->io, 0);
 }
 
 

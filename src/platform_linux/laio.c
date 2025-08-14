@@ -133,18 +133,65 @@ uring_cleanup_one(io_process_context *pctx, int mincnt)
    return 1;
 }
 
-/*
+
+// static void *
+// uring_cleaner(void *arg)
+// {
+//    io_process_context *pctx = (io_process_context *)arg;
+//    prctl(PR_SET_NAME, "uring_cleaner", 0, 0, 0);
+//    while (!pctx->shutting_down) {
+//       uring_cleanup_one(pctx, 1);
+//    }
+//    return NULL;
+// }
 static void *
 uring_cleaner(void *arg)
 {
    io_process_context *pctx = (io_process_context *)arg;
    prctl(PR_SET_NAME, "uring_cleaner", 0, 0, 0);
-   while (!pctx->shutting_down) {
-      uring_cleanup_one(pctx, 1);
+
+   uring_handle  *io   = (uring_handle *)pctx->parent; // (void*면 캐스팅)
+   const threadid ctid = platform_get_tid();
+
+   // ★ 어떤 로그/함수 호출보다 먼저 매핑!
+   lock_ctx(io);
+   io->ctx_idx[ctid] = pctx->slot_idx;
+   pctx->cleaner_tid = ctid;
+   unlock_ctx(io);
+
+   struct __kernel_timespec ts = {.tv_sec = 0, .tv_nsec = 2 * 1000 * 1000};
+
+   while (
+      !(pctx->shutting_down && __sync_fetch_and_add(&pctx->io_count, 0) == 0))
+   {
+      struct io_uring_cqe *cqe = NULL;
+      int rc = io_uring_wait_cqe_timeout(&pctx->uring_ctx.ring, &cqe, &ts);
+      if (rc == 0 && cqe) {
+         do {
+            uring_async_state *ios = io_uring_cqe_get_data(cqe);
+            ios->status            = cqe->res;
+            if (ios->callback)
+               ios->callback(ios->callback_arg);
+            io_uring_cqe_seen(&pctx->uring_ctx.ring, cqe);
+            __sync_fetch_and_sub(&pctx->io_count, 1);
+            async_wait_queue_release_one(&pctx->submit_waiters);
+
+            cqe = NULL;
+         } while (io_uring_peek_cqe(&pctx->uring_ctx.ring, &cqe) == 0 && cqe);
+         continue;
+      }
+      if (rc == -ETIME || rc == -EINTR || rc == -EAGAIN)
+         continue;
+      if (rc < 0) {
+         platform_error_log(
+            "uring_cleaner: wait_cqe err=%d (%s)\n", rc, strerror(-rc));
+      }
+   }
+
+   while (uring_cleanup_one(pctx, 0)) { /* drain */
    }
    return NULL;
 }
-*/
 
 /*
  * Find the index of the IO context for this thread. If it doesn't exist,
@@ -250,11 +297,15 @@ get_ctx_idx(uring_handle *io)
             return INVALID_TID;
          }
 
-         io->ctx[i].pid           = pid;
-         io->ctx[i].tid           = tid;
-         io->ctx[i].thread_count  = 1;
-         io->ctx[i].io_count      = 0;
-         io->ctx[i].shutting_down = 0;
+         io->ctx[i].pid               = pid;
+         io->ctx[i].tid               = tid; // 오너 워커 TID
+         io->ctx[i].cleaner_tid       = 0;   // 초기화
+         io->ctx[i].slot_idx          = i;   // ★
+         io->ctx[i].thread_count      = 1;
+         io->ctx[i].io_count          = 0;
+         io->ctx[i].shutting_down     = 0;
+         io->ctx[i].uring_ctx.heap_id = io->heap_id;
+         io->ctx[i].parent            = io; // ★
 
          io->ctx_idx[tid] = i;
 
@@ -263,6 +314,21 @@ get_ctx_idx(uring_handle *io)
                               i,
                               (unsigned long)tid,
                               (int)pid);
+
+         // per-ring 클리너 생성 (pctx만 넘김)
+         int rc_thr = pthread_create(
+            &io->ctx[i].io_cleaner, NULL, uring_cleaner, &io->ctx[i]);
+         if (rc_thr != 0) {
+            platform_error_log("pthread_create(uring_cleaner) failed: %d %s\n",
+                               rc_thr,
+                               strerror(rc_thr));
+            // 링 해제 및 롤백
+            io_uring_queue_exit(&io->ctx[i].uring_ctx.ring);
+            memset(&io->ctx[i], 0, sizeof(io->ctx[i]));
+            unlock_ctx(io);
+            return INVALID_TID;
+         }
+
 
          unlock_ctx(io);
          return i;
@@ -453,47 +519,83 @@ laio_get_thread_context(io_handle *ioh)
 //    return &io->ctx[io->ctx_idx[tid]];
 // }
 
+// static io_process_context *
+// uring_get_thread_context(io_handle *ioh)
+// {
+//    uring_handle  *io  = (uring_handle *)ioh;
+//    const threadid tid = platform_get_tid();
+//    const pid_t    pid = platform_getpid();
+
+//    // Fast path: tid → slot 매핑 사용
+//    if (tid < MAX_THREADS) {
+//       uint64 idx = io->ctx_idx[tid];
+//       if (idx < MAX_THREADS) {
+//          io_process_context *p = &io->ctx[idx];
+//          if (p->pid == pid && p->tid == tid) {
+//             return p;
+//          }
+//          platform_default_log("[CTX] tid=%lu -> slot=%lu pctx=%p ring=%p\n",
+//                               (unsigned long)tid,
+//                               (unsigned long)idx,
+//                               (void *)p,
+//                               (void *)&p->uring_ctx.ring);
+//       }
+//    }
+
+//    // Slow path: 등록된 슬롯을 선형 검색 (조회만, 생성 없음)
+//    for (int i = 0; i < MAX_THREADS; i++) {
+//       if (io->ctx[i].pid == pid && io->ctx[i].tid == tid) {
+//          // 매핑 보정(선택)
+//          if (tid < MAX_THREADS) {
+//             io->ctx_idx[tid] = i;
+//          }
+//          return &io->ctx[i];
+//       }
+//    }
+
+//    platform_assert(FALSE,
+//                    "uring_get_thread_context: no context for tid=%lu
+//                    (pid=%d). " "Did you call
+//                    uring_register_thread()/get_ctx_idx() first?", (unsigned
+//                    long)tid, (int)pid);
+//    return NULL; // not reached
+// }
 static io_process_context *
 uring_get_thread_context(io_handle *ioh)
 {
-   uring_handle  *io  = (uring_handle *)ioh;
-   const threadid tid = platform_get_tid();
-   const pid_t    pid = platform_getpid();
+   uring_handle *io  = (uring_handle *)ioh;
+   const pid_t   pid = platform_getpid();
+   threadid      tid = platform_get_tid();
 
-   // Fast path: tid → slot 매핑 사용
-   if (tid < MAX_THREADS) {
-      uint64 idx = io->ctx_idx[tid];
-      if (idx < MAX_THREADS) {
-         io_process_context *p = &io->ctx[idx];
-         if (p->pid == pid && p->tid == tid) {
-            return p;
-         }
-         platform_default_log("[CTX] tid=%lu -> slot=%lu pctx=%p ring=%p\n",
-                              (unsigned long)tid,
-                              (unsigned long)idx,
-                              (void *)p,
-                              (void *)&p->uring_ctx.ring);
+   uint64 idx = (tid < MAX_THREADS) ? io->ctx_idx[tid] : INVALID_TID;
+
+   // Fast path: 캐시된 매핑
+   if (idx < MAX_THREADS) {
+      io_process_context *p = &io->ctx[idx];
+      if (p->pid == pid && (p->tid == tid || p->cleaner_tid == tid)) {
+         return p;
       }
    }
 
-   // Slow path: 등록된 슬롯을 선형 검색 (조회만, 생성 없음)
+   // Slow path: 선형 검색 (클리너/워커 모두 커버)
    for (int i = 0; i < MAX_THREADS; i++) {
-      if (io->ctx[i].pid == pid && io->ctx[i].tid == tid) {
-         // 매핑 보정(선택)
+      io_process_context *p = &io->ctx[i];
+      if (p->pid == pid && (p->tid == tid || p->cleaner_tid == tid)) {
          if (tid < MAX_THREADS) {
-            io->ctx_idx[tid] = i;
+            io->ctx_idx[tid] = i; // 캐시 갱신 (가능할 때만)
          }
-         return &io->ctx[i];
+         return p;
       }
    }
 
    platform_assert(FALSE,
                    "uring_get_thread_context: no context for tid=%lu (pid=%d). "
-                   "Did you call uring_register_thread()/get_ctx_idx() first?",
+                   "Did you register this thread?",
                    (unsigned long)tid,
                    (int)pid);
    return NULL; // not reached
 }
+
 /*
 static io_process_context *
 uring_get_thread_context(io_handle *ioh)
@@ -717,22 +819,22 @@ uring_async_run(io_async_state *gios)
          platform_default_log("uring_async_run: after submit → %d\n",
                               submit_status);
 
-         io_process_context *const pctx =
-            ios->pctx; // ★ 로컬 고정(ios 재참조 금지)
+         // io_process_context *const pctx =
+         //    ios->pctx; // ★ 로컬 고정(ios 재참조 금지)
 
          // 1) 진행 보장: inflight가 있으면 최대 1개만 blocking 수거
-         if (__sync_fetch_and_add(&pctx->io_count, 0) > 0) {
-            (void)uring_cleanup_one(pctx, 1); // mincnt=1: 한 개는 반드시
-         }
+         // if (__sync_fetch_and_add(&pctx->io_count, 0) > 0) {
+         //    (void)uring_cleanup_one(pctx, 1); // mincnt=1: 한 개는 반드시
+         // }
 
-         // 2) 나머지는 non-blocking으로 가볍게
-         for (int pumped = 0; pumped < 63; pumped++) {
-            if (uring_cleanup_one(pctx, 0) == 0)
-               break;
-            // inflight가 0이면 더 이상 기다리지 말고 종료
-            if (__sync_fetch_and_add(&pctx->io_count, 0) == 0)
-               break;
-         }
+         // // 2) 나머지는 non-blocking으로 가볍게
+         // for (int pumped = 0; pumped < 63; pumped++) {
+         //    if (uring_cleanup_one(pctx, 0) == 0)
+         //       break;
+         //    // inflight가 0이면 더 이상 기다리지 말고 종료
+         //    if (__sync_fetch_and_add(&pctx->io_count, 0) == 0)
+         //       break;
+         // }
       }
       if (submit_status >= 0) {
          platform_default_log(
@@ -1051,10 +1153,11 @@ uring_cleanup(io_handle *ioh, uint64 count)
    // 최대 'count' 개 이벤트를 처리하거나, count==0일 때 모든 inflight I/O 처리
    int i = 0;
    while ((count == 0 || i < count) && pctx->io_count > 0) {
-      int n = uring_cleanup_one(pctx, (count == 0) ? 1 : 0);
-      if (count != 0 && n == 0)
-         break;
-      i += n;
+      // int n = uring_cleanup_one(pctx, (count == 0) ? 1 : 0);
+      // if (count != 0 && n == 0)
+      //    break;
+      // i += n;
+      i += uring_cleanup_one(pctx, 0);
    }
 }
 
@@ -1259,6 +1362,8 @@ uring_deregister_thread(io_handle *ioh)
    pctx->shutting_down = TRUE;
    unlock_ctx(io);
 
+   pthread_join(pctx->io_cleaner, NULL);
+
    // 4) 인플라이트 I/O 드레인 (필수 최소 코드)
    //    - uring_cleanup(ioh, 1): 최소 1개 완료를 처리하도록 블록
    //    - 내부에서 cqe_seen 및 pctx->io_count--가 수행되어야 함
@@ -1270,6 +1375,11 @@ uring_deregister_thread(io_handle *ioh)
    io_uring_queue_exit(&pctx->uring_ctx.ring);
 
    lock_ctx(io);
+   if (tid < MAX_THREADS)
+      io->ctx_idx[tid] = INVALID_TID;
+   if (pctx->cleaner_tid && pctx->cleaner_tid < MAX_THREADS) {
+      io->ctx_idx[pctx->cleaner_tid] = INVALID_TID;
+   }
    async_wait_queue_deinit(&pctx->submit_waiters);
    memset(pctx, 0, sizeof(*pctx)); // tid/pid=0 → 빈 슬롯
    unlock_ctx(io);
