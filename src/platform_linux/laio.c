@@ -26,6 +26,8 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <pthread.h>
+#include <stdint.h>
 #if defined(__has_feature)
 #   if __has_feature(memory_sanitizer)
 #      include <sanitizer/msan_interface.h>
@@ -39,6 +41,10 @@
  */
 static async_status
 uring_async_run(io_async_state *gios);
+
+static io_process_context *
+uring_get_thread_context(io_handle *ioh);
+
 
 static void
 lock_ctx(uring_handle *io)
@@ -55,7 +61,6 @@ unlock_ctx(uring_handle *io)
 {
    __sync_lock_release(&io->ctx_lock);
 }
-
 
 typedef struct uring_async_state {
    io_async_state      super;
@@ -77,63 +82,15 @@ typedef struct uring_async_state {
    struct iovec        iov[];
 } uring_async_state;
 
+typedef struct uring_sync_token {
+   pthread_mutex_t mu;
+   pthread_cond_t  cv;
+   int             done;
+   int             res;
+} uring_sync_token;
+
 /*
 static int
-uring_cleanup_one(io_process_context *pctx, int mincnt)
-{
-   if (mincnt == 0 && pctx->io_count == 0)
-      return 0;
-   struct io_uring_cqe *cqe = NULL;
-   int                  ret;
-
-   platform_default_log("cleanup ring=%p\n", &pctx->uring_ctx.ring);
-   //  if (pctx->io_count == 0)
-   //     return 0;
-   //  platform_default_log(
-   //     "enter cleanup_one: mincnt=%d, io_count=%lu\n", mincnt,
-   //     pctx->io_count);
-
-
-   if (mincnt > 0) {
-      ret = io_uring_wait_cqe(&pctx->uring_ctx.ring, &cqe);
-      if (ret < 0 || cqe == NULL)
-         return 0;
-   } else {
-      ret = io_uring_peek_cqe(&pctx->uring_ctx.ring, &cqe);
-      if (ret <= 0 || cqe == NULL)
-         return 0;
-   }
-
-   platform_default_log("cleanup_one: cqe->user_data=%p\n",
-                        (void *)cqe->user_data);
-   // if (cqe->user_data == 0) {
-   //    platform_default_log("cleanup_one: NOP event, marking seen\n");
-   //    io_uring_cqe_seen(&pctx->uring_ctx.ring, cqe);
-   //    return 1;
-   // }
-
-   platform_default_log("cleanup_one: before decrement io_count=%lu\n",
-                        pctx->io_count);
-   __sync_fetch_and_sub(&pctx->io_count, 1);
-   platform_default_log("cleanup_one: after decrement io_count=%lu\n",
-                        pctx->io_count);
-
-   uring_async_state *ios = io_uring_cqe_get_data(cqe);
-
-   ios->status = cqe->res;
-   if (ios->callback)
-      ios->callback(ios->callback_arg);
-   platform_default_log("cleanup_one: calling io_uring_cqe_seen()\n");
-   io_uring_cqe_seen(&pctx->uring_ctx.ring, cqe);
-
-   platform_default_log("cleanup_one: releasing one waiter\n");
-   async_wait_queue_release_one(&pctx->submit_waiters);
-
-   platform_default_log("cleanup_one: exit returning 1\n");
-   return 1;
-}
-   */
-  static int
 uring_cleanup_one(io_process_context *pctx, int mincnt)
 {
    if (mincnt == 0 && pctx->io_count == 0)
@@ -183,69 +140,76 @@ uring_cleanup_one(io_process_context *pctx, int mincnt)
    platform_default_log("cleanup_one: exit returning 1\n");
    return 1;
 }
-
-
-
-// static void *
-// uring_cleaner(void *arg)
-// {
-//    io_process_context *pctx = (io_process_context *)arg;
-//    prctl(PR_SET_NAME, "uring_cleaner", 0, 0, 0);
-//    while (!pctx->shutting_down) {
-//       uring_cleanup_one(pctx, 1);
-//    }
-//    return NULL;
-// }
-/*
-static void *
-uring_cleaner(void *arg)
-{
-   io_process_context *pctx = (io_process_context *)arg;
-   prctl(PR_SET_NAME, "uring_cleaner", 0, 0, 0);
-
-   uring_handle  *io   = (uring_handle *)pctx->parent; // (void*면 캐스팅)
-   const threadid ctid = platform_get_tid();
-
-   // ★ 어떤 로그/함수 호출보다 먼저 매핑!
-   lock_ctx(io);
-   io->ctx_idx[ctid] = pctx->slot_idx;
-   pctx->cleaner_tid = ctid;
-   unlock_ctx(io);
-
-   struct __kernel_timespec ts = {.tv_sec = 0, .tv_nsec = 2 * 1000 * 1000};
-
-   while (
-      !(pctx->shutting_down && __sync_fetch_and_add(&pctx->io_count, 0) == 0))
-   {
-      struct io_uring_cqe *cqe = NULL;
-      int rc = io_uring_wait_cqe_timeout(&pctx->uring_ctx.ring, &cqe, &ts);
-      if (rc == 0 && cqe) {
-         do {
-            uring_async_state *ios = io_uring_cqe_get_data(cqe);
-            ios->status            = cqe->res;
-            if (ios->callback)
-               ios->callback(ios->callback_arg);
-            io_uring_cqe_seen(&pctx->uring_ctx.ring, cqe);
-            __sync_fetch_and_sub(&pctx->io_count, 1);
-            async_wait_queue_release_one(&pctx->submit_waiters);
-
-            cqe = NULL;
-         } while (io_uring_peek_cqe(&pctx->uring_ctx.ring, &cqe) == 0 && cqe);
-         continue;
-      }
-      if (rc == -ETIME || rc == -EINTR || rc == -EAGAIN)
-         continue;
-      if (rc < 0) {
-         platform_error_log(
-            "uring_cleaner: wait_cqe err=%d (%s)\n", rc, strerror(-rc));
-      }
-   }
-
-   while (uring_cleanup_one(pctx, 0)) { 
-   }
-   return NULL;
-}
 */
+static int
+uring_cleanup_one(io_process_context *pctx, int mincnt)
+{
+   if (mincnt == 0 && pctx->io_count == 0)
+      return 0;
+
+   struct io_uring_cqe *cqe = NULL;
+   int ret;
+
+   if (mincnt > 0) {
+      ret = io_uring_wait_cqe(&pctx->uring_ctx.ring, &cqe);
+      if (ret < 0 || cqe == NULL)
+         return 0;
+   } else {
+      ret = io_uring_peek_cqe(&pctx->uring_ctx.ring, &cqe);
+      if (ret <= 0 || cqe == NULL)
+         return 0;
+   }
+
+   // --- 여기부터 태깅 검사 ---
+   uintptr_t ud64 = io_uring_cqe_get_data64(cqe);
+
+   // 1) NOP: 깨우기용
+   if (ud64 == 0) {
+      io_uring_cqe_seen(&pctx->uring_ctx.ring, cqe);
+      async_wait_queue_release_one(&pctx->submit_waiters);
+      return 1;
+   }
+
+   // 2) 동기 토큰 (LSB = 1)
+   if (ud64 & 1ULL) {
+      uring_sync_token *tok = (uring_sync_token *)(ud64 & ~1ULL);
+      pthread_mutex_lock(&tok->mu);
+      tok->res  = cqe->res;
+      tok->done = 1;
+      pthread_cond_signal(&tok->cv);
+      pthread_mutex_unlock(&tok->mu);
+      io_uring_cqe_seen(&pctx->uring_ctx.ring, cqe);
+      // 동기 요청은 io_count에 관여하지 않음
+      async_wait_queue_release_one(&pctx->submit_waiters);
+      return 1;
+   }
+   // --- 태깅 검사 끝 ---
+
+   // 기존 비동기 경로 (uring_async_state*)
+   platform_default_log("cleanup_one: cqe->user_data=%p\n", (void *)ud64);
+
+   platform_default_log("cleanup_one: before decrement io_count=%lu\n",
+                        pctx->io_count);
+   __sync_fetch_and_sub(&pctx->io_count, 1);
+   platform_default_log("cleanup_one: after decrement io_count=%lu\n",
+                        pctx->io_count);
+
+   uring_async_state *ios = (uring_async_state *)ud64;
+
+   ios->status = cqe->res;
+   if (ios->callback)
+      ios->callback(ios->callback_arg);
+
+   platform_default_log("cleanup_one: calling io_uring_cqe_seen()\n");
+   io_uring_cqe_seen(&pctx->uring_ctx.ring, cqe);
+
+   platform_default_log("cleanup_one: releasing one waiter\n");
+   async_wait_queue_release_one(&pctx->submit_waiters);
+
+   platform_default_log("cleanup_one: exit returning 1\n");
+   return 1;
+}
+
 static void *
 uring_cleaner(void *arg)
 {
@@ -481,6 +445,7 @@ uring_read(io_handle *ioh, void *buf, uint64 bytes, uint64 addr)
    return (cqe->res == (int)bytes) ? STATUS_OK : STATUS_IO_ERROR;
 }
 */
+/*
 static platform_status
 uring_read(io_handle *ioh, void *buf, uint64 bytes, uint64 addr)
 {
@@ -498,6 +463,82 @@ uring_read(io_handle *ioh, void *buf, uint64 bytes, uint64 addr)
       return STATUS_OK;
    }
    return STATUS_IO_ERROR;
+}
+   */
+  static platform_status
+uring_read(io_handle *ioh, void *buf, uint64 bytes, uint64 addr)
+{
+   uring_handle       *io   = (uring_handle *)ioh;
+   io_process_context *pctx = uring_get_thread_context(ioh);
+
+   uint8_t *dst  = (uint8_t *)buf;
+   uint64   off  = addr;
+   uint64   left = bytes;
+
+   // io_uring_prep_read()의 nbytes는 unsigned (32-bit)
+   const unsigned MAX_CHUNK = 0x7ffff000u; // 넉넉한 상한 (원하면 0xffffffffu 사용 가능)
+
+   while (left > 0) {
+      unsigned this_len = (left > MAX_CHUNK) ? MAX_CHUNK : (unsigned)left;
+
+      // 동기 토큰 준비
+      uring_sync_token tok;
+      pthread_mutex_init(&tok.mu, NULL);
+      pthread_cond_init(&tok.cv, NULL);
+      tok.done = 0;
+      tok.res  = -1;
+
+      // SQE 확보 (가끔 NULL이면 가볍게 CQE 비우고 재시도)
+      struct io_uring_sqe *sqe = NULL;
+      for (;;) {
+         sqe = io_uring_get_sqe(&pctx->uring_ctx.ring);
+         if (sqe)
+            break;
+         // non-blocking으로 조금 비움
+         if (!uring_cleanup_one(pctx, 0)) {
+            // 그래도 꽉 찼으면 잠깐만 기다릴 수도 있음 (선택)
+            // sched_yield();
+         }
+      }
+
+      io_uring_prep_read(sqe, io->fd, dst, this_len, off);
+      io_uring_sqe_set_data64(sqe, ((uintptr_t)&tok) | 1ULL); // ★ LSB=1: 동기 토큰
+
+      int sret = io_uring_submit(&pctx->uring_ctx.ring);
+      if (sret < 0) {
+         pthread_cond_destroy(&tok.cv);
+         pthread_mutex_destroy(&tok.mu);
+         return STATUS_IO_ERROR;
+      }
+
+      // 완료 대기 (클리너가 신호를 보냄)
+      pthread_mutex_lock(&tok.mu);
+      while (!tok.done) {
+         pthread_cond_wait(&tok.cv, &tok.mu);
+      }
+      int got = tok.res;
+      pthread_mutex_unlock(&tok.mu);
+
+      pthread_cond_destroy(&tok.cv);
+      pthread_mutex_destroy(&tok.mu);
+
+#if defined(__has_feature)
+#  if __has_feature(memory_sanitizer)
+      if (got > 0)
+         __msan_unpoison(dst, got);
+#  endif
+#endif
+
+      if (got != (int)this_len) {
+         return STATUS_IO_ERROR;
+      }
+
+      dst  += this_len;
+      off  += this_len;
+      left -= this_len;
+   }
+
+   return STATUS_OK;
 }
 /*
  * laio_write() - Basically a wrapper around pwrite().
@@ -562,16 +603,71 @@ uring_write(io_handle *ioh, void *buf, uint64 bytes, uint64 addr)
 static platform_status
 uring_write(io_handle *ioh, void *buf, uint64 bytes, uint64 addr)
 {
-   uring_handle *io;
-   int           ret;
+   uring_handle       *io   = (uring_handle *)ioh;
+   io_process_context *pctx = uring_get_thread_context(ioh);
 
-   io  = (uring_handle *)ioh;
-   ret = pwrite(io->fd, buf, bytes, addr);
-   if (ret == bytes) {
-      return STATUS_OK;
+   const uint8_t *src = (const uint8_t *)buf;
+   uint64         off = addr;
+   uint64         left = bytes;
+
+   // liburing의 nbytes는 unsigned (32-bit) 이므로 청크로 쪼갠다.
+   const unsigned MAX_CHUNK = 0x7ffff000u; // 넉넉한 상한
+
+   while (left > 0) {
+      unsigned this_len = (left > MAX_CHUNK) ? MAX_CHUNK : (unsigned)left;
+
+      // 동기 완료를 기다릴 토큰 준비
+      uring_sync_token tok;
+      pthread_mutex_init(&tok.mu, NULL);
+      pthread_cond_init(&tok.cv, NULL);
+      tok.done = 0;
+      tok.res  = -1;
+
+      // SQE 확보 (꽉 차면 가볍게 CQE를 비우며 재시도)
+      struct io_uring_sqe *sqe = NULL;
+      for (;;) {
+         sqe = io_uring_get_sqe(&pctx->uring_ctx.ring);
+         if (sqe)
+            break;
+         if (!uring_cleanup_one(pctx, 0)) {
+            // 필요하면 잠깐 양보: sched_yield();
+         }
+      }
+
+      io_uring_prep_write(sqe, io->fd, src, this_len, off);
+      // LSB=1 사용: 클리너에서 sync-token 경로로 처리하도록 구분
+      io_uring_sqe_set_data64(sqe, ((uintptr_t)&tok) | 1ULL);
+
+      int sret = io_uring_submit(&pctx->uring_ctx.ring);
+      if (sret < 0) {
+         pthread_cond_destroy(&tok.cv);
+         pthread_mutex_destroy(&tok.mu);
+         return STATUS_IO_ERROR;
+      }
+
+      // 클리너가 완료 신호를 줄 때까지 대기
+      pthread_mutex_lock(&tok.mu);
+      while (!tok.done) {
+         pthread_cond_wait(&tok.cv, &tok.mu);
+      }
+      int wrote = tok.res;
+      pthread_mutex_unlock(&tok.mu);
+
+      pthread_cond_destroy(&tok.cv);
+      pthread_mutex_destroy(&tok.mu);
+
+      if (wrote != (int)this_len) {
+         return STATUS_IO_ERROR;
+      }
+
+      src  += this_len;
+      off  += this_len;
+      left -= this_len;
    }
-   return STATUS_IO_ERROR;
+
+   return STATUS_OK;
 }
+
 /*
  * Accessor method: Return opaque handle to IO-context setup by io_setup().
  */
