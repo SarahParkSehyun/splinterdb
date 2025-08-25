@@ -77,7 +77,7 @@ typedef struct uring_async_state {
    struct iovec        iov[];
 } uring_async_state;
 
-
+/*
 static int
 uring_cleanup_one(io_process_context *pctx, int mincnt)
 {
@@ -132,6 +132,58 @@ uring_cleanup_one(io_process_context *pctx, int mincnt)
    platform_default_log("cleanup_one: exit returning 1\n");
    return 1;
 }
+   */
+  static int
+uring_cleanup_one(io_process_context *pctx, int mincnt)
+{
+   if (mincnt == 0 && pctx->io_count == 0)
+      return 0;
+
+   struct io_uring_cqe *cqe = NULL;
+   int ret;
+
+   if (mincnt > 0) {
+      ret = io_uring_wait_cqe(&pctx->uring_ctx.ring, &cqe);
+      if (ret < 0 || cqe == NULL)
+         return 0;
+   } else {
+      ret = io_uring_peek_cqe(&pctx->uring_ctx.ring, &cqe);
+      if (ret <= 0 || cqe == NULL)
+         return 0;
+   }
+
+   // ★ 깨우기용 NOP(CQE user_data==NULL)는 건드리지 않고 소비만
+   if (io_uring_cqe_get_data(cqe) == NULL) {
+      io_uring_cqe_seen(&pctx->uring_ctx.ring, cqe);
+      async_wait_queue_release_one(&pctx->submit_waiters);
+      return 1;
+   }
+
+   platform_default_log("cleanup_one: cqe->user_data=%p\n",
+                        (void *)cqe->user_data);
+
+   platform_default_log("cleanup_one: before decrement io_count=%lu\n",
+                        pctx->io_count);
+   __sync_fetch_and_sub(&pctx->io_count, 1);
+   platform_default_log("cleanup_one: after decrement io_count=%lu\n",
+                        pctx->io_count);
+
+   uring_async_state *ios = io_uring_cqe_get_data(cqe);
+
+   ios->status = cqe->res;
+   if (ios->callback)
+      ios->callback(ios->callback_arg);
+
+   platform_default_log("cleanup_one: calling io_uring_cqe_seen()\n");
+   io_uring_cqe_seen(&pctx->uring_ctx.ring, cqe);
+
+   platform_default_log("cleanup_one: releasing one waiter\n");
+   async_wait_queue_release_one(&pctx->submit_waiters);
+
+   platform_default_log("cleanup_one: exit returning 1\n");
+   return 1;
+}
+
 
 
 // static void *
@@ -144,6 +196,7 @@ uring_cleanup_one(io_process_context *pctx, int mincnt)
 //    }
 //    return NULL;
 // }
+/*
 static void *
 uring_cleaner(void *arg)
 {
@@ -188,8 +241,39 @@ uring_cleaner(void *arg)
       }
    }
 
-   while (uring_cleanup_one(pctx, 0)) { /* drain */
+   while (uring_cleanup_one(pctx, 0)) { 
    }
+   return NULL;
+}
+*/
+static void *
+uring_cleaner(void *arg)
+{
+   io_process_context *pctx = (io_process_context *)arg;
+   prctl(PR_SET_NAME, "uring_cleaner", 0, 0, 0);
+
+   // 클리너 TID 매핑(지금 코드 유지)
+   if (pctx->parent) {
+      uring_handle *io = (uring_handle *)pctx->parent;
+      threadid ctid = platform_get_tid();
+      lock_ctx(io);
+      io->ctx_idx[ctid] = pctx->slot_idx;
+      pctx->cleaner_tid = ctid;
+      unlock_ctx(io);
+   }
+
+   // 메인 루프: 1건은 반드시 처리(블로킹), 이어서 버스트 드레인(논블로킹)
+   while (!(pctx->shutting_down && __sync_fetch_and_add(&pctx->io_count, 0) == 0)) {
+      if (!uring_cleanup_one(pctx, /*mincnt=*/1)) {
+         continue; // 대기 타임아웃/깨끗한 경우
+      }
+      for (int i = 0; i < 63; i++) {
+         if (!uring_cleanup_one(pctx, /*mincnt=*/0)) break;
+      }
+   }
+
+   // 종료 드레인
+   while (uring_cleanup_one(pctx, 0)) { }
    return NULL;
 }
 
@@ -1327,7 +1411,7 @@ laio_deregister_thread(io_handle *ioh)
 //    }
 //    unlock_ctx(io);
 // }
-
+/*
 static void
 uring_deregister_thread(io_handle *ioh)
 {
@@ -1382,6 +1466,70 @@ uring_deregister_thread(io_handle *ioh)
    }
    async_wait_queue_deinit(&pctx->submit_waiters);
    memset(pctx, 0, sizeof(*pctx)); // tid/pid=0 → 빈 슬롯
+   unlock_ctx(io);
+}
+*/
+static void
+uring_deregister_thread(io_handle *ioh)
+{
+   uring_handle  *io  = (uring_handle *)ioh;
+   const pid_t    pid = platform_getpid();
+   const threadid tid = platform_get_tid();
+
+   platform_default_log("uring_deregister\n");
+
+   lock_ctx(io);
+   int idx = -1;
+   for (int i = 0; i < MAX_THREADS; i++) {
+      if (io->ctx[i].pid == pid && io->ctx[i].tid == tid) {
+         idx = i;
+         break;
+      }
+   }
+   if (idx < 0) {
+      unlock_ctx(io);
+      return;
+   }
+   io_process_context *pctx = &io->ctx[idx];
+
+   if (--pctx->thread_count > 0) {
+      unlock_ctx(io);
+      return;
+   }
+
+   // 1) 종료 플래그
+   pctx->shutting_down = TRUE;
+   unlock_ctx(io);
+
+   // 2) ★ 깨우기용 NOP 제출 (user_data == NULL)
+   {
+      struct io_uring_sqe *sqe = io_uring_get_sqe(&pctx->uring_ctx.ring);
+      if (sqe) {
+         io_uring_prep_nop(sqe);
+         io_uring_sqe_set_data(sqe, NULL); // NOP 표시
+         (void)io_uring_submit(&pctx->uring_ctx.ring);
+      }
+   }
+
+   // 3) 클리너 종료 대기
+   pthread_join(pctx->io_cleaner, NULL);
+
+   // 4) (보호용) 혹시 남았다면 드레인
+   while (pctx->io_count > 0) {
+      uring_cleanup(ioh, 1);
+   }
+
+   // 5) 링 종료 및 슬롯 반환
+   io_uring_queue_exit(&pctx->uring_ctx.ring);
+
+   lock_ctx(io);
+   if (tid < MAX_THREADS)
+      io->ctx_idx[tid] = INVALID_TID;
+   if (pctx->cleaner_tid && pctx->cleaner_tid < MAX_THREADS) {
+      io->ctx_idx[pctx->cleaner_tid] = INVALID_TID;
+   }
+   async_wait_queue_deinit(&pctx->submit_waiters);
+   memset(pctx, 0, sizeof(*pctx));
    unlock_ctx(io);
 }
 

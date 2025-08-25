@@ -138,7 +138,7 @@ help::
 #   - Use gcc to build in Asan mode to run unit-tests.
 #   - Tests will run slow in address sanitizer builds.
 ifndef BUILD_ASAN
-   BUILD_ASAN=1
+   BUILD_ASAN=0
 endif
 
 ifeq "$(BUILD_ASAN)" "1"
