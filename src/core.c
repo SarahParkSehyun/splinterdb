@@ -9,8 +9,18 @@
 
 #include "core.h"
 #include "poison.h"
+#include "clockcache.h"
 
 #define LATENCYHISTO_SIZE 15
+
+
+// static uint64 g_lookup_cnt[MAX_THREADS];
+// static uint64 g_sum_gets_no_mem   [MAX_THREADS];
+// static uint64 g_sum_misses_no_mem [MAX_THREADS];
+// static uint64 g_sum_hits_no_mem   [MAX_THREADS];
+
+//static uint64 g_sum_gets_bytype   [MAX_THREADS][NUM_PAGE_TYPES];
+//static uint64 g_sum_misses_bytype [MAX_THREADS][NUM_PAGE_TYPES];
 
 static const int64 latency_histo_buckets[LATENCYHISTO_SIZE] = {
    1,          // 1   ns
@@ -1234,6 +1244,18 @@ core_lookup(core_handle *spl, key target, merge_accumulator *result)
    //     --- 2. for [mt_no = mt->generation..mt->gen_to_incorp]
    // 2. for gen = mt->generation; mt[gen % ...].gen == gen; gen --;
    //                also handles switch to READY ^^^^^
+      // ---- per-lookup snapshot (BEFORE) -----------------------------------
+      threadid tid = platform_get_tid();
+uint64 reads_tot_before = 0, reads_bytype_before[NUM_PAGE_TYPES] = {0};
+uint64 gets_tot_before  = 0, gets_bytype_before [NUM_PAGE_TYPES] = {0};
+
+if (spl->cfg.use_stats && spl->trunk_context.cc) {
+    cache_read_breakdown_tid(spl->trunk_context.cc, tid,
+                             &reads_tot_before, reads_bytype_before);
+    cache_access_breakdown_tid(spl->trunk_context.cc, tid,
+                               &gets_tot_before, gets_bytype_before);
+}
+      // ---------------------------------------------------------------------
 
    merge_accumulator_set_to_null(result);
 
@@ -1276,23 +1298,202 @@ core_lookup(core_handle *spl, key target, merge_accumulator *result)
    }
 
 found_final_answer_early:
-
-   if (spl->cfg.use_stats) {
-      threadid tid = platform_get_tid();
-      if (!merge_accumulator_is_null(result)) {
-         spl->stats[tid].lookups_found++;
-      } else {
-         spl->stats[tid].lookups_not_found++;
+   /*
+      if (spl->cfg.use_stats) {
+         threadid tid = platform_get_tid();
+         if (!merge_accumulator_is_null(result)) {
+            spl->stats[tid].lookups_found++;
+         } else {
+            spl->stats[tid].lookups_not_found++;
+         }
       }
-   }
+   */
+   // if (spl->cfg.use_stats && spl->trunk_context.cc) {
+   //    threadid tid = platform_get_tid();
+   //    uint64   ps  = cache_page_size(spl->trunk_context.cc);
 
+   //    uint64 total_reads              = 0;
+   //    uint64 per_type[NUM_PAGE_TYPES] = {0};
+   //    cache_read_breakdown(spl->trunk_context.cc, tid, &total_reads, per_type);
+
+   //    // 예: 누적 page-reads가 4096의 배수일 때만 출력
+   //    if (total_reads && ((total_reads & 0xFFFULL) == 0)) {
+   //       for (int t = 0; t < NUM_PAGE_TYPES; t++) {
+   //          if (per_type[t]) {
+   //             const char *name = cache_page_type_name(t);
+   //             platform_default_log("[io][tid=%lu] %-8s reads=%lu bytes=%lu\n",
+   //                                  (unsigned long)tid,
+   //                                  name,
+   //                                  per_type[t],
+   //                                  per_type[t] * ps);
+   //          }
+   //       }
+   //       platform_default_log(
+   //          "[io][tid=%lu] total   reads=%lu bytes=%lu (page_size=%lu)\n",
+   //          (unsigned long)tid,
+   //          total_reads,
+   //          total_reads * ps,
+   //          ps);
+   //    }
+   // }
+   
+   if (spl->cfg.use_stats && spl->trunk_context.cc) {
+      uint64 ps = cache_page_size(spl->trunk_context.cc);
+  
+      uint64 total_reads_all = 0;
+      uint64 per_type_all[NUM_PAGE_TYPES] = {0};
+      cache_read_breakdown_all(spl->trunk_context.cc,
+                               &total_reads_all,
+                               per_type_all);
+  
+      if (total_reads_all && ((total_reads_all & 0xFFFULL) == 0)) {
+          for (int t = 0; t < NUM_PAGE_TYPES; t++) {
+              if (per_type_all[t]) {
+                  const char *name = cache_page_type_name(t);
+                  platform_default_log("[io][ALL] %-8s reads=%lu bytes=%lu\n",
+                                       name,
+                                       per_type_all[t],
+                                       per_type_all[t] * ps);
+              }
+          }
+          platform_default_log("[io][ALL] total   reads=%lu bytes=%lu (page_size=%lu)\n",
+                               total_reads_all, total_reads_all * ps, ps);
+      }
+  }
+      
+   // ---- per-lookup snapshot (AFTER) & DELTA LOG ------------------------
+   // if (spl->cfg.use_stats && spl->trunk_context.cc) {
+   //    uint64 reads_tot_after = 0, reads_bytype_after[NUM_PAGE_TYPES] = {0};
+   //    uint64 gets_tot_after  = 0,  gets_bytype_after [NUM_PAGE_TYPES] = {0};
+
+   //    cache_read_breakdown_tid(spl->trunk_context.cc, tid,
+   //                             &reads_tot_after, reads_bytype_after);
+   //    cache_access_breakdown_tid(spl->trunk_context.cc, tid,
+   //                               &gets_tot_after, gets_bytype_after);
+
+   //    uint64 d_reads = reads_tot_after - reads_tot_before; // 디스크 블록 read 수(미스)
+   //    uint64 d_gets  = gets_tot_after  - gets_tot_before;  // 총 캐시 접근 수(히트+미스)
+   //    uint64 d_hits  = (d_gets >= d_reads) ? (d_gets - d_reads) : 0;
+
+   //    // Δ가 0이면 조용히 넘어가고, 있으면 1회 lookup 결과를 출력
+   //    if (d_gets || d_reads) {
+   //       platform_default_log(
+   //          "[cache][lookup tid=%lu] accesses=%lu (hits=%lu, misses=%lu ~%lu bytes)\n",
+   //          (unsigned long)tid, d_gets, d_hits, d_reads, d_reads * ps);
+
+   //       for (int t = 0; t < NUM_PAGE_TYPES; t++) {
+   //          uint64 rg = gets_bytype_after[t]  - gets_bytype_before[t];
+   //          uint64 rr = reads_bytype_after[t] - reads_bytype_before[t];
+   //          if (rg || rr) {
+   //             const char *name = cache_page_type_name(t);
+   //             uint64 rh = (rg >= rr) ? (rg - rr) : 0;
+   //             platform_default_log(
+   //                "  * %-8s gets=%lu, hits=%lu, misses=%lu (~%lu bytes)\n",
+   //                name, rg, rh, rr, rr * ps);
+   //          }
+   //       }
+   //    }
+   // }
+   // ---------------------------------------------------------------------
    /* Normalize DELETE messages to return a null merge_accumulator */
-   if (!merge_accumulator_is_null(result)
-       && merge_accumulator_message_class(result) == MESSAGE_TYPE_DELETE)
-   {
-      merge_accumulator_set_to_null(result);
+   // --- per-lookup snapshot (AFTER) & ONE-SHOT DELTA LOG ---
+   /*
+if (spl->cfg.use_stats && spl->trunk_context.cc) {
+   threadid tid = platform_get_tid();
+
+   uint64 reads_tot_after = 0, reads_bytype_after[NUM_PAGE_TYPES] = {0};
+   uint64 gets_tot_after  = 0, gets_bytype_after [NUM_PAGE_TYPES] = {0};
+   cache_read_breakdown_tid  (spl->trunk_context.cc, (int)tid,
+                              &reads_tot_after, reads_bytype_after);
+   cache_access_breakdown_tid(spl->trunk_context.cc, (int)tid,
+                              &gets_tot_after,  gets_bytype_after);
+
+   // 1) 타입별 델타
+   uint64 d_gets_bytype [NUM_PAGE_TYPES] = {0};
+   uint64 d_reads_bytype[NUM_PAGE_TYPES] = {0};
+   for (int t = 0; t < NUM_PAGE_TYPES; t++) {
+       d_gets_bytype [t] = gets_bytype_after [t] - gets_bytype_before [t];
+       d_reads_bytype[t] = reads_bytype_after[t] - reads_bytype_before[t];
    }
 
+   // 2) 총계 델타
+   uint64 d_reads = reads_tot_after - reads_tot_before;  // misses
+   uint64 d_gets  = gets_tot_after  - gets_tot_before;   // hits+misses
+
+   if (d_gets || d_reads) {
+      uint64 ps = cache_page_size(spl->trunk_context.cc);
+  
+      // MEMTABLE 제외 총계
+      uint64 d_gets_no_mem  = d_gets  - d_gets_bytype [PAGE_TYPE_MEMTABLE];
+      uint64 d_reads_no_mem = d_reads - d_reads_bytype[PAGE_TYPE_MEMTABLE];
+      uint64 d_hits_no_mem  = (d_gets_no_mem >= d_reads_no_mem)
+                              ? (d_gets_no_mem - d_reads_no_mem) : 0;
+  
+      // ── ① 이번 lookup 델타 로그 ──────────────────────────────────────
+      platform_default_log(
+          "[lookup tid=%lu] accesses=%lu (hits=%lu, misses=%lu ~%lu bytes)\n",
+          (unsigned long)tid,
+          d_gets_no_mem, d_hits_no_mem, d_reads_no_mem, d_reads_no_mem * ps);
+  
+      for (int t = 0; t < NUM_PAGE_TYPES; t++) {
+          if (t == PAGE_TYPE_MEMTABLE) continue;
+          uint64 g = d_gets_bytype[t];
+          uint64 r = d_reads_bytype[t];
+          if (!g && !r) continue;
+          uint64 h = (g >= r) ? (g - r) : 0;
+          const char *name = cache_page_type_name(t);
+          platform_default_log(
+              "  * %-8s gets=%lu, hits=%lu, misses=%lu (~%lu bytes)\n",
+              name, g, h, r, r * ps);
+      }
+  
+      // ── ② 누적자 갱신 + 러닝 평균 출력 ──────────────────────────────
+      {
+          const uint32 tix = (uint32)platform_get_tid();
+  
+          // 누적(스레드별) – MEMTABLE 제외 총계
+          g_lookup_cnt[tix]                 += 1;
+          g_sum_gets_no_mem[tix]           += d_gets_no_mem;
+          g_sum_misses_no_mem[tix]         += d_reads_no_mem;
+          g_sum_hits_no_mem[tix]           += d_hits_no_mem;
+  
+          // 타입별 누적 (원하면 MEMTABLE도 누적해도 되지만 출력은 건너뜀)
+          for (int tt = 0; tt < NUM_PAGE_TYPES; tt++) {
+              g_sum_gets_bytype   [tix][tt] += d_gets_bytype[tt];
+              g_sum_misses_bytype [tix][tt] += d_reads_bytype[tt];
+          }
+  
+          // 평균 계산 (이번 lookup까지 반영된 러닝 평균)
+          double samples     = (double)g_lookup_cnt[tix];
+          double avg_acc     = samples ? (double)g_sum_gets_no_mem[tix]   / samples : 0.0;
+          double avg_miss    = samples ? (double)g_sum_misses_no_mem[tix] / samples : 0.0;
+          double avg_hit     = samples ? (double)g_sum_hits_no_mem[tix]   / samples : 0.0;
+          double hit_ratio   = (avg_acc > 0.0) ? (avg_hit / avg_acc) : 0.0;
+  
+          platform_default_log(
+              "  -> running-avg tid=%lu: accesses=%.2f, hits=%.2f, misses=%.2f, hit_ratio=%.2f\n",
+              (unsigned long)tix, avg_acc, avg_hit, avg_miss, hit_ratio);
+  
+          // 타입별 평균( MEMTABLE 제외 )
+          for (int tt = 0; tt < NUM_PAGE_TYPES; tt++) {
+              if (tt == PAGE_TYPE_MEMTABLE) continue;
+              uint64 sum_g = g_sum_gets_bytype  [tix][tt];
+              uint64 sum_m = g_sum_misses_bytype[tix][tt];
+              if (!sum_g && !sum_m) continue;
+  
+              double avg_g = (double)sum_g / samples;
+              double avg_m = (double)sum_m / samples;
+              double avg_h = (sum_g >= sum_m) ? (double)(sum_g - sum_m) / samples : 0.0;
+  
+              const char *tname = cache_page_type_name(tt);
+              platform_default_log(
+                  "     · %-8s avg_gets=%.2f  avg_hits=%.2f  avg_misses=%.2f\n",
+                  tname, avg_g, avg_h, avg_m);
+          }
+      }
+  }
+}
+  */
    return STATUS_OK;
 }
 

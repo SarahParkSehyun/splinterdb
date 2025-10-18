@@ -184,6 +184,117 @@ clockcache_print(platform_log_handle *log_handle, clockcache *cc);
  *-----------------------------------------------------------------------------
  */
 
+
+ void
+ cache_read_breakdown_all(cache *cc_super,
+                          uint64 *total_reads_out,
+                          uint64 per_type_out[NUM_PAGE_TYPES])
+ {
+    clockcache *c = (clockcache *)cc_super;
+ 
+    // 초기화
+    *total_reads_out = 0;
+    for (int t = 0; t < NUM_PAGE_TYPES; t++) {
+       per_type_out[t] = 0;
+    }
+ 
+    // 모든 tid를 합산 (활성/비활성 관계없이 0이면 영향 없음)
+    for (int tid = 0; tid < MAX_THREADS; tid++) {
+       for (int t = 0; t < NUM_PAGE_TYPES; t++) {
+          uint64 r = c->stats[tid].page_reads[t];
+          per_type_out[t] += r;
+          *total_reads_out += r;
+       }
+    }
+ }
+void
+cache_access_breakdown_all(cache *cc_super,
+                           uint64 *total_gets_out,
+                           uint64 gets_per_type_out[NUM_PAGE_TYPES])
+{
+    clockcache *c = (clockcache *)cc_super;
+    *total_gets_out = 0;
+    for (int t = 0; t < NUM_PAGE_TYPES; t++) gets_per_type_out[t] = 0;
+
+    for (int tid = 0; tid < MAX_THREADS; tid++) {
+        for (int t = 0; t < NUM_PAGE_TYPES; t++) {
+            uint64 g = c->stats[tid].page_gets[t];
+            gets_per_type_out[t] += g;
+            *total_gets_out += g;
+        }
+    }
+}
+void
+cache_read_breakdown_tid(cache *cc_super, int tid,
+                         uint64 *total_reads_out,
+                         uint64 per_type_out[NUM_PAGE_TYPES])
+{
+    clockcache *c = (clockcache *)cc_super;
+    *total_reads_out = 0;
+    for (int t = 0; t < NUM_PAGE_TYPES; t++) {
+        uint64 r = c->stats[tid].page_reads[t];
+        per_type_out[t] = r;
+        *total_reads_out += r;
+    }
+}
+
+void
+cache_access_breakdown_tid(cache *cc_super, int tid,
+                           uint64 *total_gets_out,
+                           uint64 gets_per_type_out[NUM_PAGE_TYPES])
+{
+    clockcache *c = (clockcache *)cc_super;
+    *total_gets_out = 0;
+    for (int t = 0; t < NUM_PAGE_TYPES; t++) {
+        uint64 g = c->stats[tid].page_gets[t];   // 앞서 추가한 총 접근 수(히트+미스)
+        gets_per_type_out[t] = g;
+        *total_gets_out += g;
+    }
+}
+
+uint64
+cache_total_page_reads(cache *cc, threadid tid)
+{
+   clockcache *c   = (clockcache *)cc;
+   uint64      sum = 0;
+   for (int t = 0; t < NUM_PAGE_TYPES; t++) {
+      sum += c->stats[tid].page_reads[t];
+   }
+   return sum;
+}
+
+void
+cache_read_breakdown(cache   *cc,
+                     threadid tid,
+                     uint64  *out_total_reads,
+                     uint64   per_type_reads[NUM_PAGE_TYPES])
+{
+   clockcache *c   = (clockcache *)cc;
+   uint64      sum = 0;
+   for (int t = 0; t < NUM_PAGE_TYPES; t++) {
+      uint64 r          = c->stats[tid].page_reads[t];
+      per_type_reads[t] = r;
+      sum += r;
+   }
+   if (out_total_reads)
+      *out_total_reads = sum;
+}
+
+const char *
+cache_page_type_name(int t)
+{
+   switch (t) {
+      case PAGE_TYPE_INVALID:    return "INVALID";
+      case PAGE_TYPE_TRUNK:      return "TRUNK";
+      case PAGE_TYPE_BRANCH:     return "BRANCH";
+      case PAGE_TYPE_MEMTABLE:   return "MEMTABLE";
+      case PAGE_TYPE_FILTER:     return "FILTER";
+      case PAGE_TYPE_LOG:        return "LOG";
+      case PAGE_TYPE_SUPERBLOCK: return "SUPERBLOCK";
+      case PAGE_TYPE_MISC:       return "MISC";
+      default:                   return "UNKNOWN";
+   }
+}
 /* Validate entry_number, and return addr of clockcache_entry slot */
 static inline clockcache_entry *
 clockcache_get_entry(clockcache *cc, uint32 entry_number)
@@ -504,8 +615,7 @@ clockcache_assert_clean(clockcache *cc)
    for (i = 0; (i < cc->cfg->page_capacity)
                && (clockcache_test_flag(cc, i, CC_FREE)
                    || clockcache_test_flag(cc, i, CC_CLEAN));
-        i++)
-   { /* Do nothing */
+        i++) { /* Do nothing */
    }
    return (i == cc->cfg->page_capacity);
 }
@@ -1562,6 +1672,7 @@ clockcache_get_in_cache(clockcache   *cc,           // IN
 
    if (cc->cfg->use_stats) {
       cc->stats[tid].cache_hits[type]++;
+      cc->stats[tid].page_gets[type]++;
    }
    clockcache_log(addr,
                   entry_number,
@@ -1660,6 +1771,7 @@ clockcache_get_from_disk(clockcache   *cc,   // IN
       cc->stats[tid].cache_misses[type]++;
       cc->stats[tid].page_reads[type]++;
       cc->stats[tid].cache_miss_time_ns[type] += elapsed;
+      cc->stats[tid].page_gets[type]++; 
    }
 
    clockcache_finish_load(cc, addr, entry_number);

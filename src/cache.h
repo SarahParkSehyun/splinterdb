@@ -33,6 +33,8 @@ typedef struct cache_stats {
    uint64 cache_miss_time_ns[NUM_PAGE_TYPES];
    uint64 page_writes[NUM_PAGE_TYPES];
    uint64 page_reads[NUM_PAGE_TYPES];
+   //추가
+   uint64 page_gets[NUM_PAGE_TYPES];
    uint64 prefetches_issued[NUM_PAGE_TYPES];
    uint64 writes_issued;
    uint64 syncs_issued;
@@ -285,6 +287,17 @@ cache_get_async_state_result(cache *cc, page_get_async_state_buffer buffer)
    return cc->ops->page_get_async_result(buffer);
 }
 
+void cache_read_breakdown_tid(cache *cc_super, int tid,
+   uint64 *total_reads_out,
+   uint64 per_type_out[NUM_PAGE_TYPES]);
+
+void cache_access_breakdown_tid(cache *cc_super, int tid,
+     uint64 *total_gets_out,
+     uint64 gets_per_type_out[NUM_PAGE_TYPES]);
+     
+void cache_read_breakdown_all(cache *cc,
+   uint64 *total_reads_out,
+   uint64 per_type_out[NUM_PAGE_TYPES]);
 /*
  *----------------------------------------------------------------------
  * cache_unget
@@ -771,6 +784,20 @@ cache_page_size(const cache *cc)
 {
    return cache_config_page_size(cache_get_config(cc));
 }
+
+uint64
+cache_total_page_reads(cache *cc, threadid tid);
+
+// 새로 추가: 스레드 tid 기준 page_type별 디스크 read 횟수 반환
+void
+cache_read_breakdown(cache   *cc,
+                     threadid tid,
+                     uint64  *out_total_reads,
+                     uint64   per_type_reads[NUM_PAGE_TYPES]);
+
+// (선택) page_type을 사람이 읽을 문자열로
+const char *
+cache_page_type_name(int t);
 
 /*
  *-----------------------------------------------------------------------------

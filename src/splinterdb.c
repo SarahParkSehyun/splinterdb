@@ -167,6 +167,8 @@ splinterdb_init_config(const splinterdb_config *kvs_cfg, // IN
    memcpy(&cfg, kvs_cfg, sizeof(cfg));
    splinterdb_config_set_defaults(&cfg);
 
+   //cfg.use_stats = TRUE;
+
    io_config_init(&kvs->io_cfg,
                   cfg.page_size,
                   cfg.extent_size,

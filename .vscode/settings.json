@@ -7,6 +7,9 @@
     "fcntl.h": "c",
     "string_view": "c",
     "liburing.h": "c",
-    "msan_interface.h": "c"
+    "msan_interface.h": "c",
+    "functional": "c",
+    "chrono": "c",
+    "routing_filter.h": "c"
   }
 }

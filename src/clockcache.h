@@ -151,6 +151,14 @@ _Static_assert(MAX_READ_REFCOUNT
  * Function declarations
  *-----------------------------------------------------------------------------
  */
+// void cache_read_breakdown_all(cache *cc_super,
+//    uint64 *total_reads_out,
+//    uint64 per_type_out[NUM_PAGE_TYPES]);
+
+// void cache_access_breakdown_all(cache *cc_super,
+//    uint64 *total_gets_out,
+//    uint64 gets_per_type_out[NUM_PAGE_TYPES]);
+
 
 void
 clockcache_config_init(clockcache_config *cache_config,

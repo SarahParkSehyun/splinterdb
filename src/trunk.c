@@ -19,6 +19,7 @@
 #include "data_internal.h"
 #include "task.h"
 #include "poison.h"
+#include "cache.h"
 
 typedef VECTOR(routing_filter) routing_filter_vector;
 
@@ -1457,6 +1458,131 @@ bundle_deserialize(bundle *bndl, platform_heap_id hid, trunk_ondisk_bundle *odb)
    }
 
    return STATUS_OK;
+}
+static void
+trunk_debug_node_bytes(trunk_context *ctx,
+                       trunk_ondisk_node_handle *h,
+                       platform_log_handle *log)
+{
+   const uint64 page_size = cache_page_size(ctx->cc);
+
+   // 1) 각 섹션이 위치한 페이지의 base 선택
+   const char *hdr_base  = h->header_page->data;
+   trunk_ondisk_node *hdr = (trunk_ondisk_node *)hdr_base;
+
+   const char *pivot_base =
+      h->pivot_page ? h->pivot_page->data : hdr_base;
+
+   const char *inflight_base =
+      h->inflight_bundle_page ? h->inflight_bundle_page->data : hdr_base;
+
+   // 2) 헤더 고정부/오프셋 테이블 크기
+   const size_t header_fixed = sizeof(hdr->height)
+                             + sizeof(hdr->num_pivots)
+                             + sizeof(hdr->num_inflight_bundles)
+                             + sizeof(hdr->inflight_bundles_offset);
+   const size_t pivot_offsets_bytes = (size_t)hdr->num_pivots * sizeof(uint32);
+
+   // pivot_offsets[]는 항상 "헤더 페이지" 기준 오프셋이라는 가정 하에,
+   // 헤더 페이지에서 읽어서 피벗 페이지 base에 더해 사용합니다.
+   const uint32 *pivot_offsets_tbl =
+      (const uint32 *)(hdr_base + header_fixed);
+
+   // 3) 피벗 영역 총 바이트
+   size_t pivot_area_bytes = 0;
+
+   // 마지막 피벗의 끝 경계 결정
+   // - inflight 번들이 없으면: 피벗 영역은 해당 피벗이 있는 페이지의 끝까지
+   // - inflight 번들이 같은 페이지에 있으면: 번들 시작 오프셋 직전까지
+   // - inflight 번들이 다른 페이지에 있으면: 피벗 페이지의 끝까지
+   const char *pivot_area_end = NULL;
+   if (hdr->num_inflight_bundles == 0) {
+      pivot_area_end = pivot_base + page_size;
+   } else if (inflight_base == pivot_base) {
+      // 같은 페이지일 때만 inflight_bundles_offset을 경계로 사용
+      pivot_area_end = inflight_base + hdr->inflight_bundles_offset;
+      // 방어: 오프셋이 비정상이면 페이지 끝으로 보정
+      if (pivot_area_end < pivot_base || pivot_area_end > pivot_base + page_size) {
+         pivot_area_end = pivot_base + page_size;
+      }
+   } else {
+      pivot_area_end = pivot_base + page_size;
+   }
+
+   for (uint32 i = 0; i < hdr->num_pivots; i++) {
+      uint32 off_i = pivot_offsets_tbl[i];
+      // 방어: 오프셋 범위 보정
+      if (off_i >= page_size) off_i = (uint32)(page_size - 1);
+
+      const char *start_i = pivot_base + off_i;
+      const char *end_i   = NULL;
+
+      if (i + 1 < hdr->num_pivots) {
+         uint32 off_next = pivot_offsets_tbl[i + 1];
+         if (off_next > page_size) off_next = (uint32)page_size;
+         end_i = pivot_base + off_next;
+      } else {
+         end_i = pivot_area_end;
+      }
+
+      // 방어: 경계가 역전되면 페이지 끝까지로 보정
+      if (end_i >= start_i) {
+         pivot_area_bytes += (size_t)(end_i - start_i);
+      } else {
+         pivot_area_bytes += (size_t)((pivot_base + page_size) - start_i);
+      }
+   }
+
+   // 4) 인플라이트 번들 영역 총 바이트
+   size_t inflight_bytes = 0;
+   if (hdr->num_inflight_bundles > 0) {
+      trunk_ondisk_bundle *b = NULL;
+      platform_status rc = trunk_ondisk_node_get_first_inflight_bundle(h, &b);
+      if (SUCCESS(rc) && b) {
+         for (uint32 i = 0; i < hdr->num_inflight_bundles; i++) {
+            trunk_ondisk_bundle *next = NULL;
+            if (i + 1 < hdr->num_inflight_bundles) {
+               next = trunk_ondisk_node_get_next_inflight_bundle(h, b);
+            }
+            const char *start = (const char *)b;
+            const char *end   = NULL;
+
+            if (next && (const char *)next > start) {
+               end = (const char *)next;
+            } else {
+               // 마지막 번들이거나 이상값이면, 해당 번들이 위치한 페이지의 끝까지로
+               end = inflight_base + page_size;
+            }
+
+            if (end >= start) {
+               inflight_bytes += (size_t)(end - start);
+            }
+            b = next;
+         }
+      }
+   }
+
+   // 5) 헤더 페이지에서 "눈에 보이는" 사용량
+   const size_t header_page_visible =
+        header_fixed + pivot_offsets_bytes
+      + (pivot_base     == hdr_base ? pivot_area_bytes  : 0)
+      + (inflight_base  == hdr_base ? inflight_bytes    : 0);
+
+   // 6) 총 페이지 수(대략)와 근사 총 바이트
+   const uint32 pages = 1
+      + (h->pivot_page ? 1 : 0)
+      + (h->inflight_bundle_page ? 1 : 0);
+
+   platform_default_log(
+      "trunk node %lu: header_fixed=%zu, pivot_offsets=%zu, "
+      "pivot_area=%zu (%s), inflight=%zu (%s), "
+      "header_page_visible=%zu, pages=%u, approx_total_bytes=%zu\n",
+      h->header_page->disk_addr,
+      header_fixed, pivot_offsets_bytes,
+      pivot_area_bytes, (pivot_base==hdr_base?"header_page":"pivot_page"),
+      inflight_bytes, (inflight_base==hdr_base?"header_page":"inflight_page"),
+      header_page_visible,
+      pages, (size_t)pages * page_size);
 }
 
 static platform_status
@@ -5092,6 +5218,43 @@ trunk_ondisk_node_find_pivot_async(trunk_merge_lookup_async_state *state,
    async_return(state);
 }
 
+// static routing_hdr *
+// rf_get_header_inline(cache                *cc,
+//                      const routing_config *cfg,
+//                      uint64                filter_addr,
+//                      uint64                index,
+//                      page_handle         **filter_page)
+// {
+//    const uint64 page_size      = cache_config_page_size(cfg->cache_cfg);
+//    const uint64 addrs_per_page = page_size / sizeof(uint64);
+
+//    debug_assert(index / addrs_per_page < 32);
+
+//    const uint64 index_addr = filter_addr + page_size * (index / addrs_per_page);
+//    page_handle *index_page = cache_get(cc, index_addr, TRUE, PAGE_TYPE_FILTER);
+
+//    uint64 hdr_raw_addr = ((uint64 *)index_page->data)[index % addrs_per_page];
+//    platform_assert(hdr_raw_addr != 0);
+
+//    const uint64 header_addr = hdr_raw_addr - (hdr_raw_addr % page_size);
+//    *filter_page             = cache_get(cc, header_addr, TRUE, PAGE_TYPE_FILTER);
+
+//    const uint64 header_off  = hdr_raw_addr - header_addr;
+//    routing_hdr *hdr         = (routing_hdr *)((*filter_page)->data + header_off);
+
+//    cache_unget(cc, index_page);
+//    return hdr;
+// }
+
+// static inline void
+// rf_unget_header_inline(cache *cc, page_handle *filter_page)
+// {
+//    if (filter_page) {
+//       cache_unget(cc, filter_page);
+//    }
+// }
+
+
 static platform_status
 trunk_ondisk_bundle_merge_lookup(trunk_context       *context,
                                  uint64               height,
@@ -5125,7 +5288,12 @@ trunk_ondisk_bundle_merge_lookup(trunk_context       *context,
       }
    }
 
-
+   platform_default_log("maplet: %lu\n", bndl->maplet.addr);
+   uint64 fsz = routing_filter_approx_size(context->cc,
+      context->cfg->filter_cfg,
+      &bndl->maplet);
+   platform_default_log("filter approx bytes: %lu\n", fsz);
+   found_values = (1ULL << bndl->num_branches) - 1;
    if (log) {
       platform_log(log, "maplet: %lu\n", bndl->maplet.addr);
       platform_log(log, "found_values: %lu\n", found_values);
@@ -5331,6 +5499,10 @@ trunk_merge_lookup(trunk_context            *context,
       }
 
       trunk_ondisk_pivot *pivot;
+      platform_error_log("ENTER node addr=%lu height=%lu\n",
+         handlep->header_page->disk_addr,
+         trunk_ondisk_node_height(handlep));
+      trunk_debug_node_bytes(context, handlep, NULL);
       rc = trunk_ondisk_node_find_pivot(
          context, handlep, tgt, less_than_or_equal, &pivot);
       if (!SUCCESS(rc)) {

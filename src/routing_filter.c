@@ -136,6 +136,42 @@ RadixSort(uint32 *pData,
  *----------------------------------------------------------------------
  */
 
+ static inline routing_hdr *
+ routing_get_header(cache *cc, const routing_config *cfg,
+                    uint64 filter_addr, uint64 index,
+                    page_handle **filter_page);
+ static inline void
+ routing_unget_header(cache *cc, page_handle *filter_page);
+ uint64
+ routing_filter_approx_size(cache *cc,
+                            const routing_config *cfg,
+                            const routing_filter *filter)
+ {
+     if (filter->addr == 0) return 0;
+ 
+     uint64 index = 0;                         // 아무 index 하나면 충분
+     page_handle *filter_node = NULL;
+     routing_hdr *hdr = routing_get_header(cc, cfg, filter->addr, index, &filter_node);
+     if (!hdr) return 0;
+ 
+     uint32 log_num_buckets = 31 - __builtin_clz(filter->num_fingerprints);
+     if (log_num_buckets < cfg->log_index_size) log_num_buckets = cfg->log_index_size;
+ 
+     const size_t value_size = filter->value_size;                            // bits
+     const uint32 remainder_size = cfg->fingerprint_size - log_num_buckets;   // bits
+     const size_t remainder_and_value_size = remainder_size + value_size;     // bits
+ 
+     const uint64 index_size = cfg->index_size;
+     const uint64 encoding_size = (hdr->num_remainders + index_size - 1) / 8 + 4; // bytes
+     const uint64 header_length = encoding_size + sizeof(routing_hdr);            // bytes
+ 
+     const uint64 remainder_bits  = (uint64)hdr->num_remainders * remainder_and_value_size;
+     const uint64 remainder_bytes = ((remainder_bits + 31) / 32) * 4;              // bytes (32-bit align)
+ 
+     routing_unget_header(cc, filter_node);
+     return header_length + remainder_bytes;
+ }
+
 debug_only static inline void
 routing_set_bit(uint64 *data, uint64 bitnum)
 {
