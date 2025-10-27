@@ -136,47 +136,60 @@ RadixSort(uint32 *pData,
  *----------------------------------------------------------------------
  */
 
- static inline routing_hdr *
- routing_get_header(cache *cc, const routing_config *cfg,
-                    uint64 filter_addr, uint64 index,
-                    page_handle **filter_page);
- static inline void
- routing_unget_header(cache *cc, page_handle *filter_page);
- uint64
- routing_filter_approx_size(cache *cc,
-                            const routing_config *cfg,
-                            const routing_filter *filter)
- {
-     if (filter->addr == 0) return 0;
- 
-     uint64 index = 0;                         // 아무 index 하나면 충분
-     page_handle *filter_node = NULL;
-     routing_hdr *hdr = routing_get_header(cc, cfg, filter->addr, index, &filter_node);
-     if (!hdr) return 0;
- 
-     uint32 log_num_buckets = 31 - __builtin_clz(filter->num_fingerprints);
-     if (log_num_buckets < cfg->log_index_size) log_num_buckets = cfg->log_index_size;
- 
-     const size_t value_size = filter->value_size;                            // bits
-     const uint32 remainder_size = cfg->fingerprint_size - log_num_buckets;   // bits
-     const size_t remainder_and_value_size = remainder_size + value_size;     // bits
- 
-     const uint64 index_size = cfg->index_size;
-     const uint64 encoding_size = (hdr->num_remainders + index_size - 1) / 8 + 4; // bytes
-     const uint64 header_length = encoding_size + sizeof(routing_hdr);            // bytes
- 
-     const uint64 remainder_bits  = (uint64)hdr->num_remainders * remainder_and_value_size;
-     const uint64 remainder_bytes = ((remainder_bits + 31) / 32) * 4;              // bytes (32-bit align)
- 
-     routing_unget_header(cc, filter_node);
-     return header_length + remainder_bytes;
- }
+static inline routing_hdr *
+routing_get_header(cache                *cc,
+                   const routing_config *cfg,
+                   uint64                filter_addr,
+                   uint64                index,
+                   page_handle         **filter_page);
+static inline void
+routing_unget_header(cache *cc, page_handle *filter_page);
+
+/*
+uint64
+routing_filter_approx_size(cache                *cc,
+                           const routing_config *cfg,
+                           const routing_filter *filter)
+{
+   if (filter->addr == 0)
+      return 0;
+
+   uint64       index       = 0; // 아무 index 하나면 충분
+   page_handle *filter_node = NULL;
+   routing_hdr *hdr =
+      routing_get_header(cc, cfg, filter->addr, index, &filter_node);
+   if (!hdr)
+      return 0;
+
+   uint32 log_num_buckets = 31 - __builtin_clz(filter->num_fingerprints);
+   if (log_num_buckets < cfg->log_index_size)
+      log_num_buckets = cfg->log_index_size;
+
+   const size_t value_size = filter->value_size; // bits
+   const uint32 remainder_size =
+      cfg->fingerprint_size - log_num_buckets;                          // bits
+   const size_t remainder_and_value_size = remainder_size + value_size; // bits
+
+   const uint64 index_size = cfg->index_size;
+   const uint64 encoding_size =
+      (hdr->num_remainders + index_size - 1) / 8 + 4;                // bytes
+   const uint64 header_length = encoding_size + sizeof(routing_hdr); // bytes
+
+   const uint64 remainder_bits =
+      (uint64)hdr->num_remainders * remainder_and_value_size;
+   const uint64 remainder_bytes =
+      ((remainder_bits + 31) / 32) * 4; // bytes (32-bit align)
+
+   routing_unget_header(cc, filter_node);
+   return header_length + remainder_bytes;
+}
 
 debug_only static inline void
 routing_set_bit(uint64 *data, uint64 bitnum)
 {
    *(data + bitnum / 64) |= (1ULL << (bitnum % 64));
 }
+*/
 
 static inline void
 routing_unset_bit(uint64 *data, uint64 bitnum)
@@ -222,7 +235,10 @@ routing_get_header(cache                *cc,
    page_handle *index_page = cache_get(cc, index_addr, TRUE, PAGE_TYPE_FILTER);
    uint64 hdr_raw_addr = ((uint64 *)index_page->data)[index % addrs_per_page];
    platform_assert(hdr_raw_addr != 0);
-   uint64 header_addr      = hdr_raw_addr - (hdr_raw_addr % page_size);
+   uint64 header_addr = hdr_raw_addr - (hdr_raw_addr % page_size);
+#ifdef ENABLE_SPEC_PREFETCH
+   cache_prefetch_page(cc, header_addr, PAGE_TYPE_FILTER);
+#endif
    *filter_page            = cache_get(cc, header_addr, TRUE, PAGE_TYPE_FILTER);
    uint64       header_off = hdr_raw_addr - header_addr;
    routing_hdr *hdr        = (routing_hdr *)((*filter_page)->data + header_off);

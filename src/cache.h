@@ -163,6 +163,7 @@ typedef struct cache_ops {
    page_generic_fn      page_lock;
    page_generic_fn      page_unlock;
    page_prefetch_fn     page_prefetch;
+   page_prefetch_fn     page_prefetch_page;
    page_generic_fn      page_mark_dirty;
    page_generic_fn      page_pin;
    page_generic_fn      page_unpin;
@@ -410,6 +411,21 @@ static inline void
 cache_prefetch(cache *cc, uint64 addr, page_type type)
 {
    return cc->ops->page_prefetch(cc, addr, type);
+}
+
+/*
+ *----------------------------------------------------------------------
+ * cache_prefetch_page
+ *
+ * Asynchronously load a single page. More efficient than cache_prefetch
+ * when you only need one page instead of a whole extent.
+ *
+ *----------------------------------------------------------------------
+ */
+static inline void
+cache_prefetch_page(cache *cc, uint64 addr, page_type type)
+{
+   return cc->ops->page_prefetch_page(cc, addr, type);
 }
 
 /*

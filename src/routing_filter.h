@@ -76,9 +76,9 @@ typedef struct ONDISK routing_filter {
 #define NULL_ROUTING_FILTER ((routing_filter){0})
 
 typedef struct ONDISK routing_hdr routing_hdr;
-uint64 routing_filter_approx_size(cache *cc,
-   const routing_config *cfg,
-   const routing_filter *filter);
+// uint64 routing_filter_approx_size(cache *cc,
+//    const routing_config *cfg,
+//    const routing_filter *filter);
 
 platform_status
 routing_filter_add(cache                *cc,

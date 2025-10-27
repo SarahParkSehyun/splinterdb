@@ -167,7 +167,8 @@ splinterdb_init_config(const splinterdb_config *kvs_cfg, // IN
    memcpy(&cfg, kvs_cfg, sizeof(cfg));
    splinterdb_config_set_defaults(&cfg);
 
-   //cfg.use_stats = TRUE;
+   cfg.use_stats = TRUE;
+   cfg.use_shmem = TRUE;
 
    io_config_init(&kvs->io_cfg,
                   cfg.page_size,
@@ -456,10 +457,11 @@ splinterdb_close(splinterdb **kvs_in) // IN
    splinterdb *kvs = *kvs_in;
    platform_assert(kvs != NULL);
 
-   // Print stats if shared memory is enabled.
-   if (kvs->heap_id) {
-      splinterdb_close_print_stats(kvs);
-   }
+   platform_default_log("DEBUG: splinterdb_close called, heap_id=%p\n",
+                        (void *)kvs->heap_id);
+
+   // Print stats regardless of heap_id
+   splinterdb_close_print_stats(kvs);
    /*
     * NOTE: These dismantling routines must appear in exactly the reverse
     * order when these sub-systems were init'ed when a Splinter device was
@@ -816,6 +818,7 @@ splinterdb_stats_reset(splinterdb *kvs)
 static void
 splinterdb_close_print_stats(splinterdb *kvs)
 {
+   platform_default_log("DEBUG: splinterdb_close_print_stats called\n");
    task_print_stats(kvs->task_sys);
    splinterdb_stats_print_insertion(kvs);
 }

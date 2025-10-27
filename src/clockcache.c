@@ -2432,6 +2432,7 @@ clockcache_prefetch_callback(void *pfs)
    debug_only page_type type      = PAGE_TYPE_INVALID;
    debug_only uint64    last_addr = CC_UNMAPPED_ADDR;
 
+
    platform_assert(count > 0);
    platform_assert(count <= cc->cfg->pages_per_extent);
 
@@ -2458,6 +2459,106 @@ clockcache_prefetch_callback(void *pfs)
 
    io_async_state_deinit(state->iostate);
    platform_free(cc->heap_id, state);
+}
+
+/*
+ *-----------------------------------------------------------------------------
+ * clockcache_prefetch_page --
+ *
+ *      prefetch asynchronously loads a single page
+ *-----------------------------------------------------------------------------
+ */
+void
+clockcache_prefetch_page(clockcache *cc, uint64 addr, page_type type)
+{
+   async_io_state *state = NULL;
+   threadid tid = platform_get_tid();
+   
+   debug_assert(addr % clockcache_page_size(cc) == 0);
+   
+   uint32 entry_no = clockcache_lookup(cc, addr);
+   get_rc get_read_rc;
+   if (entry_no != CC_UNMAPPED_ENTRY) {
+      get_read_rc = clockcache_try_get_read(cc, entry_no, TRUE);
+   } else {
+      get_read_rc = GET_RC_EVICTED;
+   }
+
+   switch (get_read_rc) {
+      case GET_RC_SUCCESS:
+         clockcache_dec_ref(cc, entry_no, tid);
+         // already in cache, no prefetch needed
+         clockcache_log(addr, entry_no, "prefetch_page (cached): entry %u addr %lu\n", 
+                       entry_no, addr);
+         return; // 이미 캐시에 있으면 prefetch 불필요
+      case GET_RC_CONFLICT:
+         // someone else is loading this page, no prefetch needed
+         clockcache_log(addr, entry_no, "prefetch_page (loading): entry %u addr %lu\n", 
+                       entry_no, addr);
+         return; // 이미 로딩 중이면 prefetch 불필요
+      case GET_RC_EVICTED:
+      {
+         // need to prefetch this single page
+         uint32 free_entry_no = clockcache_get_free_page(
+            cc, CC_READ_LOADING_STATUS, type, FALSE, TRUE);
+         clockcache_entry *entry = &cc->entry[free_entry_no];
+         entry->page.disk_addr   = addr;
+         entry->type             = type;
+         uint64 lookup_no        = clockcache_divide_by_page_size(cc, addr);
+         // 항상 I/O 상태 생성
+         if (state == NULL) {
+            state = TYPED_MALLOC(cc->heap_id, state);
+            platform_assert(state);
+            state->cc = cc;
+            io_async_state_init(state->iostate,
+                                cc->io,
+                                io_async_preadv,
+                                addr,
+                                clockcache_prefetch_callback,
+                                state);
+         }
+         
+         if (__sync_bool_compare_and_swap(
+                &cc->lookup[lookup_no], CC_UNMAPPED_ENTRY, free_entry_no))
+         {
+            // 성공적으로 엔트리 할당됨
+            platform_status rc = io_async_state_append_page(state->iostate, entry->page.data);
+            platform_assert_status_ok(rc);
+            
+            if (cc->cfg->use_stats) {
+               cc->stats[tid].prefetches_issued[type]++;
+            }
+            
+            clockcache_log(addr, entry_no, "prefetch_page (load): entry %u addr %lu\n", 
+                          entry_no, addr);
+         } else {
+            // someone else got there first, release our entry
+            entry->page.disk_addr = CC_UNMAPPED_ADDR;
+            entry->type           = PAGE_TYPE_INVALID;
+            platform_assert(entry->waiters.head == NULL);
+            entry->status = CC_FREE_STATUS;
+            
+            clockcache_log(addr, entry_no, "prefetch_page (race): entry %u addr %lu\n", 
+                          entry_no, addr);
+         }
+         break;
+      }
+      default:
+         platform_assert(0);
+   }
+   
+   // I/O 시작 (기존 clockcache_prefetch와 동일한 패턴)
+   if (state != NULL) {
+      if (cc->cfg->use_stats) {
+         threadid tid = platform_get_tid();
+         uint64   count;
+         io_async_state_get_iovec(state->iostate, &count);
+         cc->stats[tid].page_reads[type] += count;
+         cc->stats[tid].prefetches_issued[type]++;
+      }
+      
+      io_async_run(state->iostate);
+   }
 }
 
 /*
@@ -2951,6 +3052,13 @@ clockcache_prefetch_virtual(cache *c, uint64 addr, page_type type)
 }
 
 void
+clockcache_prefetch_page_virtual(cache *c, uint64 addr, page_type type)
+{
+   clockcache *cc = (clockcache *)c;
+   clockcache_prefetch_page(cc, addr, type);
+}
+
+void
 clockcache_mark_dirty_virtual(cache *c, page_handle *page)
 {
    clockcache *cc = (clockcache *)c;
@@ -3151,6 +3259,7 @@ static cache_ops clockcache_ops = {
    .page_lock         = clockcache_lock_virtual,
    .page_unlock       = clockcache_unlock_virtual,
    .page_prefetch     = clockcache_prefetch_virtual,
+   .page_prefetch_page = clockcache_prefetch_page_virtual,
    .page_mark_dirty   = clockcache_mark_dirty_virtual,
    .page_pin          = clockcache_pin_virtual,
    .page_unpin        = clockcache_unpin_virtual,
