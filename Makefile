@@ -75,6 +75,7 @@ INCLUDE = -I $(INCDIR) -I $(SRCDIR) -I $(SRCDIR)/platform_$(PLATFORM) -I $(TESTS
 CFLAGS += -D_GNU_SOURCE -ggdb -Wall -pthread -Wfatal-errors -Werror -Wvla -g -gdwarf-4 -fno-omit-frame-pointer
 CFLAGS += -DXXH_STATIC_LINKING_ONLY -fPIC
 CFLAGS += -DSPLINTERDB_PLATFORM_DIR=$(PLATFORM_DIR)
+CFLAGS += -DENABLE_SPEC_PREFETCH
 
 # track git ref in the built library. We don't put this into CFLAGS
 # directly because it causes false-positives in our config tracking.

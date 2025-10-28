@@ -2059,6 +2059,13 @@ btree_lookup_node(cache              *cc,             // IN
          accumulate_node_ranks(cfg, node.hdr, 0, child_idx, stats);
       }
 
+#ifdef ENABLE_SPEC_PREFETCH
+      // 자식 노드 prefetch - 효과가 큰 후보
+      if (child_node.addr != 0) {
+         cache_prefetch_page(cc, child_node.addr, type);
+      }
+#endif
+
       btree_node_get(cc, cfg, &child_node, type);
       debug_assert(child_node.page->disk_addr == child_node.addr);
       btree_node_unget(cc, cfg, &node);
@@ -2136,6 +2143,12 @@ btree_lookup_node_async(btree_lookup_async_state *state, uint64 depth)
             state->cfg, state->node.hdr, 0, child_idx, state->stats);
       }
 
+#ifdef ENABLE_SPEC_PREFETCH
+      // 자식 노드 prefetch - 효과가 큰 후보
+      if (state->child_node.addr != 0) {
+         cache_prefetch_page(state->cc, state->child_node.addr, state->type);
+      }
+#endif
 
       cache_get_async_state_init(state->cache_get_state,
                                  state->cc,

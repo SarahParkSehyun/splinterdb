@@ -136,47 +136,60 @@ RadixSort(uint32 *pData,
  *----------------------------------------------------------------------
  */
 
- static inline routing_hdr *
- routing_get_header(cache *cc, const routing_config *cfg,
-                    uint64 filter_addr, uint64 index,
-                    page_handle **filter_page);
- static inline void
- routing_unget_header(cache *cc, page_handle *filter_page);
- uint64
- routing_filter_approx_size(cache *cc,
-                            const routing_config *cfg,
-                            const routing_filter *filter)
- {
-     if (filter->addr == 0) return 0;
- 
-     uint64 index = 0;                         // 아무 index 하나면 충분
-     page_handle *filter_node = NULL;
-     routing_hdr *hdr = routing_get_header(cc, cfg, filter->addr, index, &filter_node);
-     if (!hdr) return 0;
- 
-     uint32 log_num_buckets = 31 - __builtin_clz(filter->num_fingerprints);
-     if (log_num_buckets < cfg->log_index_size) log_num_buckets = cfg->log_index_size;
- 
-     const size_t value_size = filter->value_size;                            // bits
-     const uint32 remainder_size = cfg->fingerprint_size - log_num_buckets;   // bits
-     const size_t remainder_and_value_size = remainder_size + value_size;     // bits
- 
-     const uint64 index_size = cfg->index_size;
-     const uint64 encoding_size = (hdr->num_remainders + index_size - 1) / 8 + 4; // bytes
-     const uint64 header_length = encoding_size + sizeof(routing_hdr);            // bytes
- 
-     const uint64 remainder_bits  = (uint64)hdr->num_remainders * remainder_and_value_size;
-     const uint64 remainder_bytes = ((remainder_bits + 31) / 32) * 4;              // bytes (32-bit align)
- 
-     routing_unget_header(cc, filter_node);
-     return header_length + remainder_bytes;
- }
+static inline routing_hdr *
+routing_get_header(cache                *cc,
+                   const routing_config *cfg,
+                   uint64                filter_addr,
+                   uint64                index,
+                   page_handle         **filter_page);
+static inline void
+routing_unget_header(cache *cc, page_handle *filter_page);
+
+/*
+uint64
+routing_filter_approx_size(cache                *cc,
+                           const routing_config *cfg,
+                           const routing_filter *filter)
+{
+   if (filter->addr == 0)
+      return 0;
+
+   uint64       index       = 0; // 아무 index 하나면 충분
+   page_handle *filter_node = NULL;
+   routing_hdr *hdr =
+      routing_get_header(cc, cfg, filter->addr, index, &filter_node);
+   if (!hdr)
+      return 0;
+
+   uint32 log_num_buckets = 31 - __builtin_clz(filter->num_fingerprints);
+   if (log_num_buckets < cfg->log_index_size)
+      log_num_buckets = cfg->log_index_size;
+
+   const size_t value_size = filter->value_size; // bits
+   const uint32 remainder_size =
+      cfg->fingerprint_size - log_num_buckets;                          // bits
+   const size_t remainder_and_value_size = remainder_size + value_size; // bits
+
+   const uint64 index_size = cfg->index_size;
+   const uint64 encoding_size =
+      (hdr->num_remainders + index_size - 1) / 8 + 4;                // bytes
+   const uint64 header_length = encoding_size + sizeof(routing_hdr); // bytes
+
+   const uint64 remainder_bits =
+      (uint64)hdr->num_remainders * remainder_and_value_size;
+   const uint64 remainder_bytes =
+      ((remainder_bits + 31) / 32) * 4; // bytes (32-bit align)
+
+   routing_unget_header(cc, filter_node);
+   return header_length + remainder_bytes;
+}
 
 debug_only static inline void
 routing_set_bit(uint64 *data, uint64 bitnum)
 {
    *(data + bitnum / 64) |= (1ULL << (bitnum % 64));
 }
+*/
 
 static inline void
 routing_unset_bit(uint64 *data, uint64 bitnum)
@@ -220,9 +233,83 @@ routing_get_header(cache                *cc,
    debug_assert(index / addrs_per_page < 32);
    uint64       index_addr = filter_addr + page_size * (index / addrs_per_page);
    page_handle *index_page = cache_get(cc, index_addr, TRUE, PAGE_TYPE_FILTER);
-   uint64 hdr_raw_addr = ((uint64 *)index_page->data)[index % addrs_per_page];
+   uint64 slot_idx = index % addrs_per_page;
+   
+   // 디버깅: index_page 정보 출력
+   platform_default_log(
+      "ROUTING_GET_HEADER_DEBUG: index_page->disk_addr=0x%lx, index_page->data=%p, page_size=%lu\n",
+      index_page->disk_addr, index_page->data, page_size);
+   
+   // 메모리 정렬 확인
+   if ((uintptr_t)index_page->data % sizeof(uint64) != 0) {
+      platform_default_log(
+         "ROUTING_GET_HEADER_ERROR: index_page->data not aligned! data=%p\n",
+         index_page->data);
+   }
+   
+   uint64 hdr_raw_addr = ((uint64 *)index_page->data)[slot_idx];
+   
+   // 디버깅: hdr_raw_addr 값 출력 (항상)
+   platform_default_log(
+      "ROUTING_GET_HEADER: index=%lu, index_addr=0x%lx, slot_idx=%lu, hdr_raw_addr=0x%lx, addrs_per_page=%lu, page_size=%lu\n",
+      index, index_addr, slot_idx, hdr_raw_addr, addrs_per_page, page_size);
+   
+   // slot_idx 범위 검증
+   if (slot_idx >= addrs_per_page) {
+      platform_default_log(
+         "ROUTING_GET_HEADER_ERROR: slot_idx=%lu >= addrs_per_page=%lu\n",
+         slot_idx, addrs_per_page);
+      cache_unget(cc, index_page);
+      platform_assert(slot_idx < addrs_per_page);
+   }
+   
+   // hdr_raw_addr 유효성 검증: 합리적인 범위 내에 있어야 함
+   // 일반적으로 디스크 주소는 TB 단위를 넘지 않음 (예: 1TB = 0x10000000000)
+   uint64 max_reasonable_addr = (1ULL << 40) * 1024; // 1TB
+   bool hdr_raw_addr_invalid = (hdr_raw_addr == 0) 
+                             || (hdr_raw_addr > max_reasonable_addr)
+                             || (hdr_raw_addr % page_size == 0 && hdr_raw_addr < filter_addr);
+   
+   // 디버깅: hdr_raw_addr이 0이거나 비정상적인 경우 상세 정보 출력
+   if (hdr_raw_addr_invalid) {
+      platform_default_log(
+         "ROUTING_GET_HEADER_ERROR: hdr_raw_addr=0x%lx (invalid)\n"
+         "  filter_addr=0x%lx, index=%lu, index_addr=0x%lx\n"
+         "  page_size=%lu, addrs_per_page=%lu, slot_in_page=%lu\n"
+         "  index_page->disk_addr=0x%lx, index_page->data=%p\n",
+         hdr_raw_addr, filter_addr, index, index_addr,
+         page_size, addrs_per_page, index % addrs_per_page,
+         index_page->disk_addr, index_page->data);
+      
+      // 디렉터리 페이지의 관련 엔트리들 출력
+      platform_default_log("  Directory entries around slot_idx %lu:\n", slot_idx);
+      uint64 start_idx = (slot_idx > 8) ? slot_idx - 8 : 0;
+      uint64 end_idx = ((slot_idx + 8) < addrs_per_page) ? slot_idx + 8 : addrs_per_page;
+      for (uint64 i = start_idx; i < end_idx; i++) {
+         uint64 entry = ((uint64 *)index_page->data)[i];
+         platform_default_log("    [%lu] = 0x%lx%s\n", 
+            i, entry, (i == slot_idx) ? " <-- ERROR HERE" : "");
+      }
+      
+      // assert 전에 unget
+      cache_unget(cc, index_page);
+      platform_assert(!hdr_raw_addr_invalid);
+   }
+   
    platform_assert(hdr_raw_addr != 0);
-   uint64 header_addr      = hdr_raw_addr - (hdr_raw_addr % page_size);
+   uint64 header_addr = hdr_raw_addr - (hdr_raw_addr % page_size);
+   
+   // 추가 검증: header_addr이 유효한 범위인지 확인
+   if (header_addr == 0 || header_addr > UINT64_MAX - page_size) {
+      platform_default_log(
+         "ROUTING_GET_HEADER_ERROR: header_addr=0x%lx (invalid, derived from hdr_raw_addr=0x%lx)\n",
+         header_addr, hdr_raw_addr);
+      cache_unget(cc, index_page);
+      platform_assert(header_addr != 0 && header_addr <= UINT64_MAX - page_size);
+   }
+// #ifdef ENABLE_SPEC_PREFETCH
+//    cache_prefetch_page(cc, header_addr, PAGE_TYPE_FILTER);
+// #endif
    *filter_page            = cache_get(cc, header_addr, TRUE, PAGE_TYPE_FILTER);
    uint64       header_off = hdr_raw_addr - header_addr;
    routing_hdr *hdr        = (routing_hdr *)((*filter_page)->data + header_off);
@@ -1052,6 +1139,15 @@ routing_filter_lookup(cache                *cc,
    uint32 index =
       routing_get_index(fp << value_size, index_remainder_and_value_size);
    uint32 remainder = fp & remainder_mask;
+
+   // 디버깅: index 계산 정보 출력
+   platform_default_log(
+      "ROUTING_FILTER_LOOKUP: filter_addr=0x%lx, num_fingerprints=%u\n"
+      "  fp=0x%x, value_size=%zu, remainder_size=%u, log_index_size=%u\n"
+      "  index=%u, index_remainder_and_value_size=%zu\n",
+      filter->addr, filter->num_fingerprints,
+      fp, value_size, remainder_size, cfg->log_index_size,
+      index, index_remainder_and_value_size);
 
    page_handle *filter_node;
    routing_hdr *hdr =

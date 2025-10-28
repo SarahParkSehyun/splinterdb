@@ -1741,6 +1741,12 @@ clockcache_finish_load(clockcache *cc,      // IN
    async_wait_queue_release_all(&entry->waiters);
 }
 
+// Forward declarations for SSB functions
+static speculative_page *ssb_lookup(clockcache *cc, uint64 addr, page_type type);
+static speculative_page *ssb_alloc_page(clockcache *cc);
+static void ssb_free_page(clockcache *cc, speculative_page *sp);
+static page_handle *ssb_promote_to_cache(clockcache *cc, speculative_page *sp, page_type type);
+
 static bool32
 clockcache_get_from_disk(clockcache   *cc,   // IN
                          uint64        addr, // IN
@@ -1749,6 +1755,20 @@ clockcache_get_from_disk(clockcache   *cc,   // IN
 {
    threadid tid       = platform_get_tid();
    uint64   page_size = clockcache_page_size(cc);
+   
+   // SSB에서 조회 - speculative read가 이미 완료되었을 수 있음
+   speculative_page *sp = ssb_lookup(cc, addr, type);
+   if (sp != NULL) {
+      // SSB에 있음 - 즉시 캐시로 승격
+      sp->touch_count++;
+      sp->needs_promote = TRUE;
+      page_handle *promoted = ssb_promote_to_cache(cc, sp, type);
+      if (promoted != NULL) {
+         *page = promoted;
+         clockcache_log(addr, 0, "ssb_hit_promote: addr %lu\n", addr);
+         return FALSE;
+      }
+   }
 
    uint64 entry_number = clockcache_acquire_entry_for_load(cc, addr, type);
    if (entry_number == CC_UNMAPPED_ENTRY) {
@@ -2395,6 +2415,135 @@ clockcache_extent_sync(clockcache *cc, uint64 addr, uint64 *pages_outstanding)
 
 /*
  *----------------------------------------------------------------------
+ * SSB (Speculative Staging Buffer) 함수들
+ *----------------------------------------------------------------------
+ */
+
+/*
+ * SSB에서 페이지 조회
+ */
+static speculative_page *
+ssb_lookup(clockcache *cc, uint64 addr, page_type type)
+{
+   for (uint32 i = 0; i < MAX_SSB_PAGES; i++) {
+      if (cc->ssb_pool[i].addr == addr && cc->ssb_pool[i].type == type) {
+         return &cc->ssb_pool[i];
+      }
+   }
+   return NULL;
+}
+
+/*
+ * SSB에서 빈 슬롯 찾기
+ */
+static speculative_page *
+ssb_alloc_page(clockcache *cc)
+{
+   for (uint32 i = 0; i < MAX_SSB_PAGES; i++) {
+      if (cc->ssb_pool[i].addr == 0) {
+         cc->ssb_count++;
+         return &cc->ssb_pool[i];
+      }
+   }
+   return NULL; // SSB 풀 가득 참
+}
+
+/*
+ * SSB에서 페이지 제거
+ */
+static void
+ssb_free_page(clockcache *cc, speculative_page *sp)
+{
+   sp->addr = 0;
+   sp->type = PAGE_TYPE_INVALID;
+   sp->touch_count = 0;
+   sp->needs_promote = FALSE;
+   sp->last_touch = 0;
+   cc->ssb_count--;
+}
+
+/*
+ * SSB에서 캐시로 승격
+ */
+static page_handle *
+ssb_promote_to_cache(clockcache *cc, speculative_page *sp, page_type type)
+{
+   // 캐시에 빈 슬롯 찾기
+   uint32 free_entry_no = clockcache_get_free_page(
+      cc, CC_READ_LOADING_STATUS, type, FALSE, TRUE);
+   clockcache_entry *entry = &cc->entry[free_entry_no];
+   entry->page.disk_addr = sp->addr;
+   entry->type           = type;
+   
+   // 페이지 데이터 복사
+   uint64 page_size = clockcache_page_size(cc);
+   memcpy(entry->page.data, sp->page.data, page_size);
+   
+   // lookup 업데이트
+   uint64 lookup_no = clockcache_divide_by_page_size(cc, sp->addr);
+   if (__sync_bool_compare_and_swap(
+          &cc->lookup[lookup_no], CC_UNMAPPED_ENTRY, free_entry_no))
+   {
+      // SSB에서 제거
+      ssb_free_page(cc, sp);
+      clockcache_log(sp->addr, free_entry_no, "ssb_promote: entry %u addr %lu\n", 
+                     free_entry_no, sp->addr);
+      return &entry->page;
+   } else {
+      // 경쟁 상태 - 빈 슬롯 반환
+      entry->page.disk_addr = CC_UNMAPPED_ADDR;
+      entry->type           = PAGE_TYPE_INVALID;
+      entry->status = CC_FREE_STATUS;
+      return NULL;
+   }
+}
+
+/*
+ * SSB prefetch callback을 위한 확장 구조체
+ */
+typedef struct ssb_io_state {
+   async_io_state base;
+   speculative_page *ssb_page;  // SSB 페이지 포인터
+} ssb_io_state;
+
+/*
+ * SSB prefetch callback
+ */
+static void
+ssb_prefetch_callback(void *pfs)
+{
+   ssb_io_state *ssb_state = (ssb_io_state *)pfs;
+   async_io_state *state = (async_io_state *)&ssb_state->base;
+   
+   if (io_async_run(state->iostate) != ASYNC_STATUS_DONE) {
+      return;
+   }
+   
+   platform_status st = io_async_state_get_result(state->iostate);
+   if (st.r < 0) {
+      platform_default_log("SSB prefetch I/O failed: %d\n", st.r);
+      // SSB 페이지 제거
+      if (ssb_state->ssb_page) {
+         ssb_free_page(state->cc, ssb_state->ssb_page);
+      }
+      io_async_state_deinit(state->iostate);
+      platform_free(state->cc->heap_id, ssb_state);
+      return;
+   }
+   
+   clockcache *cc = state->cc;
+   
+   // SSB 페이지 업데이트 완료 표시
+   if (ssb_state->ssb_page) {
+      clockcache_log(ssb_state->ssb_page->addr, 0, "ssb_prefetch_callback: completed\n");
+   }
+   
+   io_async_state_deinit(state->iostate);
+   platform_free(cc->heap_id, ssb_state);
+}
+
+/*
+ *----------------------------------------------------------------------
  * clockcache_prefetch_callback --
  *
  *      Internal callback function to clean up after prefetching a collection
@@ -2432,6 +2581,7 @@ clockcache_prefetch_callback(void *pfs)
    debug_only page_type type      = PAGE_TYPE_INVALID;
    debug_only uint64    last_addr = CC_UNMAPPED_ADDR;
 
+
    platform_assert(count > 0);
    platform_assert(count <= cc->cfg->pages_per_extent);
 
@@ -2458,6 +2608,82 @@ clockcache_prefetch_callback(void *pfs)
 
    io_async_state_deinit(state->iostate);
    platform_free(cc->heap_id, state);
+}
+
+/*
+ *-----------------------------------------------------------------------------
+ * clockcache_prefetch_page --
+ *
+ *      prefetch asynchronously loads a single page
+ *-----------------------------------------------------------------------------
+ */
+void
+clockcache_prefetch_page(clockcache *cc, uint64 addr, page_type type)
+{
+   threadid tid = platform_get_tid();
+   
+   debug_assert(addr % clockcache_page_size(cc) == 0);
+   
+   // 이미 캐시에 있는지 확인
+   uint32 entry_no = clockcache_lookup(cc, addr);
+   if (entry_no != CC_UNMAPPED_ENTRY) {
+      // 이미 캐시에 있거나 로딩 중 - SSB에 넣지 않음
+      return;
+   }
+   
+   // SSB에 이미 있는지 확인
+   speculative_page *existing = ssb_lookup(cc, addr, type);
+   if (existing != NULL) {
+      existing->touch_count++; // 접근 횟수 증가 (voting)
+      return;
+   }
+   
+   // SSB에 추가
+   speculative_page *sp = ssb_alloc_page(cc);
+   if (sp == NULL) {
+      // SSB 풀 가득 참 - 무시
+      return;
+   }
+   
+   sp->addr = addr;
+   sp->type = type;
+   sp->page.disk_addr = addr;
+   sp->touch_count = 0;
+   sp->needs_promote = FALSE;
+   sp->last_touch = 0; // 현재는 미사용 (향후 캐싱 정책에 사용 가능)
+   
+   // SSB에 speculative read 시작
+   ssb_io_state *ssb_state = TYPED_MALLOC(cc->heap_id, ssb_state);
+   if (ssb_state == NULL) {
+      ssb_free_page(cc, sp);
+      return;
+   }
+   
+   ssb_state->ssb_page = sp;
+   async_io_state *state = (async_io_state *)&ssb_state->base;
+   
+   state->cc = cc;
+   io_async_state_init(state->iostate,
+                       cc->io,
+                       io_async_preadv,
+                       addr,
+                       ssb_prefetch_callback,
+                       ssb_state);
+   
+   platform_status rc = io_async_state_append_page(state->iostate, sp->page.data);
+   if (!SUCCESS(rc)) {
+      platform_free(cc->heap_id, ssb_state);
+      ssb_free_page(cc, sp);
+      return;
+   }
+   
+   if (cc->cfg->use_stats) {
+      cc->stats[tid].prefetches_issued[type]++;
+   }
+   
+   clockcache_log(addr, 0, "ssb_prefetch: addr %lu\n", addr);
+   
+   io_async_run(state->iostate);
 }
 
 /*
@@ -2951,6 +3177,13 @@ clockcache_prefetch_virtual(cache *c, uint64 addr, page_type type)
 }
 
 void
+clockcache_prefetch_page_virtual(cache *c, uint64 addr, page_type type)
+{
+   clockcache *cc = (clockcache *)c;
+   clockcache_prefetch_page(cc, addr, type);
+}
+
+void
 clockcache_mark_dirty_virtual(cache *c, page_handle *page)
 {
    clockcache *cc = (clockcache *)c;
@@ -3151,6 +3384,7 @@ static cache_ops clockcache_ops = {
    .page_lock         = clockcache_lock_virtual,
    .page_unlock       = clockcache_unlock_virtual,
    .page_prefetch     = clockcache_prefetch_virtual,
+   .page_prefetch_page = clockcache_prefetch_page_virtual,
    .page_mark_dirty   = clockcache_mark_dirty_virtual,
    .page_pin          = clockcache_pin_virtual,
    .page_unpin        = clockcache_unpin_virtual,
@@ -3316,6 +3550,33 @@ clockcache_init(clockcache        *cc,   // OUT
       goto alloc_error;
    }
 
+   // SSB (Speculative Staging Buffer) 초기화
+   cc->ssb_count = 0;
+   cc->ssb_pool = TYPED_ARRAY_MALLOC(hid, cc->ssb_pool, MAX_SSB_PAGES);
+   if (!cc->ssb_pool) {
+      goto alloc_error;
+   }
+   memset(cc->ssb_pool, 0, MAX_SSB_PAGES * sizeof(speculative_page));
+   
+   // SSB 메모리 할당 (페이지 데이터용)
+   cc->ssb_memory_size = MAX_SSB_PAGES * clockcache_page_size(cc);
+   cc->ssb_data = (char *)TYPED_ARRAY_MALLOC(hid, cc->ssb_data, cc->ssb_memory_size);
+   if (!cc->ssb_data) {
+      platform_free(hid, cc->ssb_pool);
+      goto alloc_error;
+   }
+   
+   // SSB 페이지들을 초기화
+   for (i = 0; i < MAX_SSB_PAGES; i++) {
+      cc->ssb_pool[i].addr = 0;
+      cc->ssb_pool[i].type = PAGE_TYPE_INVALID;
+      cc->ssb_pool[i].page.data = cc->ssb_data + i * clockcache_page_size(cc);
+      cc->ssb_pool[i].page.disk_addr = 0;
+      cc->ssb_pool[i].touch_count = 0;
+      cc->ssb_pool[i].needs_promote = FALSE;
+      cc->ssb_pool[i].last_touch = 0;
+   }
+
    return STATUS_OK;
 
 alloc_error:
@@ -3365,6 +3626,16 @@ clockcache_deinit(clockcache *cc) // IN/OUT
       rc = platform_buffer_deinit(&cc->rc_bh);
       debug_assert(SUCCESS(rc), "rc=%s", platform_status_to_string(rc));
       cc->refcount = NULL;
+   }
+
+   // SSB 정리
+   if (cc->ssb_pool) {
+      platform_free(cc->heap_id, cc->ssb_pool);
+      cc->ssb_pool = NULL;
+   }
+   if (cc->ssb_data) {
+      platform_free(cc->heap_id, cc->ssb_data);
+      cc->ssb_data = NULL;
    }
 
    if (cc->pincount) {

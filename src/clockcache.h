@@ -109,6 +109,20 @@ struct clockcache_entry {
  *      eviction use cc->batch_busy to avoid conflicts and contention.
  *----------------------------------------------------------------------
  */
+/*
+ * Speculative Staging Buffer (SSB) - 캐시 외부 임시 저장소
+ */
+#define MAX_SSB_PAGES 10  
+
+typedef struct speculative_page {
+   uint64 addr;
+   page_type type;
+   page_handle page;
+   volatile uint32 touch_count;  // 접근 횟수 (vote)
+   bool needs_promote;           // 승격 필요 여부
+   uint64 last_touch;            // 마지막 접근 시간
+} speculative_page;
+
 struct clockcache {
    cache              super;
    clockcache_config *cfg;
@@ -140,6 +154,12 @@ struct clockcache {
 
    // Stats
    cache_stats stats[MAX_THREADS];
+   
+   // SSB (Speculative Staging Buffer)
+   volatile uint32 ssb_count;           // 현재 SSB에 있는 페이지 수
+   speculative_page *ssb_pool;          // SSB 페이지 풀
+   uint64            ssb_memory_size;    // SSB 메모리 크기
+   char             *ssb_data;          // SSB 데이터 메모리
 };
 
 _Static_assert(MAX_READ_REFCOUNT
