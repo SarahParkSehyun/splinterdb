@@ -104,32 +104,32 @@ uring_cleanup_one(io_process_context *pctx, int mincnt)
          return 0;
    }
 
-   platform_default_log("cleanup_one: cqe->user_data=%p\n",
-                        (void *)cqe->user_data);
+   // platform_default_log("cleanup_one: cqe->user_data=%p\n",
+   //                      (void *)cqe->user_data);
    // if (cqe->user_data == 0) {
    //    platform_default_log("cleanup_one: NOP event, marking seen\n");
    //    io_uring_cqe_seen(&pctx->uring_ctx.ring, cqe);
    //    return 1;
    // }
 
-   platform_default_log("cleanup_one: before decrement io_count=%lu\n",
-                        pctx->io_count);
+   // platform_default_log("cleanup_one: before decrement io_count=%lu\n",
+   //                      pctx->io_count);
    __sync_fetch_and_sub(&pctx->io_count, 1);
-   platform_default_log("cleanup_one: after decrement io_count=%lu\n",
-                        pctx->io_count);
+   // platform_default_log("cleanup_one: after decrement io_count=%lu\n",
+   //                      pctx->io_count);
 
    uring_async_state *ios = io_uring_cqe_get_data(cqe);
 
    ios->status = cqe->res;
    if (ios->callback)
       ios->callback(ios->callback_arg);
-   platform_default_log("cleanup_one: calling io_uring_cqe_seen()\n");
+   // platform_default_log("cleanup_one: calling io_uring_cqe_seen()\n");
    io_uring_cqe_seen(&pctx->uring_ctx.ring, cqe);
 
-   platform_default_log("cleanup_one: releasing one waiter\n");
+   // platform_default_log("cleanup_one: releasing one waiter\n");
    async_wait_queue_release_one(&pctx->submit_waiters);
 
-   platform_default_log("cleanup_one: exit returning 1\n");
+   // platform_default_log("cleanup_one: exit returning 1\n");
    return 1;
 }
    */
@@ -159,14 +159,14 @@ uring_cleanup_one(io_process_context *pctx, int mincnt)
       return 1;
    }
 
-   platform_default_log("cleanup_one: cqe->user_data=%p\n",
-                        (void *)cqe->user_data);
+   // platform_default_log("cleanup_one: cqe->user_data=%p\n",
+   //                      (void *)cqe->user_data);
 
-   platform_default_log("cleanup_one: before decrement io_count=%lu\n",
-                        pctx->io_count);
+   // platform_default_log("cleanup_one: before decrement io_count=%lu\n",
+   //                      pctx->io_count);
    __sync_fetch_and_sub(&pctx->io_count, 1);
-   platform_default_log("cleanup_one: after decrement io_count=%lu\n",
-                        pctx->io_count);
+   // platform_default_log("cleanup_one: after decrement io_count=%lu\n",
+   //                      pctx->io_count);
 
    uring_async_state *ios = io_uring_cqe_get_data(cqe);
 
@@ -174,13 +174,13 @@ uring_cleanup_one(io_process_context *pctx, int mincnt)
    if (ios->callback)
       ios->callback(ios->callback_arg);
 
-   platform_default_log("cleanup_one: calling io_uring_cqe_seen()\n");
+   // platform_default_log("cleanup_one: calling io_uring_cqe_seen()\n");
    io_uring_cqe_seen(&pctx->uring_ctx.ring, cqe);
 
-   platform_default_log("cleanup_one: releasing one waiter\n");
+   // platform_default_log("cleanup_one: releasing one waiter\n");
    async_wait_queue_release_one(&pctx->submit_waiters);
 
-   platform_default_log("cleanup_one: exit returning 1\n");
+   // platform_default_log("cleanup_one: exit returning 1\n");
    return 1;
 }
 
@@ -394,10 +394,10 @@ get_ctx_idx(uring_handle *io)
          io->ctx_idx[tid] = i;
 
          async_wait_queue_init(&io->ctx[i].submit_waiters);
-         platform_default_log("uring: assigned slot=%d to tid=%lu (pid=%d)\n",
-                              i,
-                              (unsigned long)tid,
-                              (int)pid);
+         // platform_default_log("uring: assigned slot=%d to tid=%lu (pid=%d)\n",
+         //                      i,
+         //                      (unsigned long)tid,
+         //                      (int)pid);
 
          // per-ring 클리너 생성 (pctx만 넘김)
          int rc_thr = pthread_create(
@@ -829,41 +829,41 @@ uring_async_run(io_async_state *gios)
 
    // slot(=ctx index) 찍고 싶으면 ios->io를 uring_handle로 캐스팅해서
    // ctx_idx[]에서 얻습니다.
-   uring_handle *uh   = (uring_handle *)ios->io;
-   threadid      tid  = platform_get_tid();
-   uint64        slot = (tid < MAX_THREADS) ? uh->ctx_idx[tid] : (uint64)-1;
+   // uring_handle *uh   = (uring_handle *)ios->io;
+   // threadid      tid  = platform_get_tid();
+   // uint64        slot = (tid < MAX_THREADS) ? uh->ctx_idx[tid] : (uint64)-1;
 
-   platform_default_log(
-      "[RUN] tid=%lu slot=%ld pctx=%p ring=%p iovlen=%lu io_count=%lu\n",
-      (unsigned long)tid,
-      (long)((slot < MAX_THREADS) ? (long)slot : -1L),
-      (void *)ios->pctx,
-      (void *)&ios->pctx->uring_ctx.ring,
-      (unsigned long)ios->iovlen,
-      (unsigned long)ios->pctx->io_count);
+   // platform_default_log(
+   //    "[RUN] tid=%lu slot=%ld pctx=%p ring=%p iovlen=%lu io_count=%lu\n",
+   //    (unsigned long)tid,
+   //    (long)((slot < MAX_THREADS) ? (long)slot : -1L),
+   //    (void *)ios->pctx,
+   //    (void *)&ios->pctx->uring_ctx.ring,
+   //    (unsigned long)ios->iovlen,
+   //    (unsigned long)ios->pctx->io_count);
 
    async_begin(ios, 0);
 
-   platform_default_log("uring_async_run: entry (iovlen=%lu)\n",
-                        (unsigned long)ios->iovlen);
+   // platform_default_log("uring_async_run: entry (iovlen=%lu)\n",
+   //                      (unsigned long)ios->iovlen);
 
    if (ios->iovlen == 0) {
-      platform_default_log("uring_async_run: no I/O to submit, done\n");
+      // platform_default_log("uring_async_run: no I/O to submit, done\n");
       async_return(ios);
    }
 
    ios->pctx = uring_get_thread_context((io_handle *)ios->io);
-   platform_default_log("uring_async_run: got pctx=%p (io_count=%lu)\n",
-                        ios->pctx,
-                        (unsigned long)ios->pctx->io_count);
+   // platform_default_log("uring_async_run: got pctx=%p (io_count=%lu)\n",
+   //                      ios->pctx,
+   //                      (unsigned long)ios->pctx->io_count);
 
    // SQE 준비
    struct io_uring_sqe *sqe;
    sqe = io_uring_get_sqe(&ios->pctx->uring_ctx.ring);
-   platform_default_log("uring_async_run: got sqe=%p\n", (void *)sqe);
+   // platform_default_log("uring_async_run: got sqe=%p\n", (void *)sqe);
    if (sqe) {
-      platform_default_log("uring_async_run: prepping %s\n",
-                           ios->cmd == io_async_preadv ? "readv" : "writev");
+      // platform_default_log("uring_async_run: prepping %s\n",
+      //                      ios->cmd == io_async_preadv ? "readv" : "writev");
       if (ios->cmd == io_async_preadv) {
          io_uring_prep_readv(
             sqe, ios->io->fd, ios->iovs, ios->iovlen, ios->addr);
@@ -872,14 +872,14 @@ uring_async_run(io_async_state *gios)
             sqe, ios->io->fd, ios->iovs, ios->iovlen, ios->addr);
       }
       io_uring_sqe_set_data(sqe, ios);
-      platform_default_log("uring_async_run: set user_data → %p\n", ios);
+      // platform_default_log("uring_async_run: set user_data → %p\n", ios);
       __sync_fetch_and_add(&ios->pctx->io_count, 1);
-      platform_default_log("uring_async_run: io_count++ → %lu\n",
-                           (unsigned long)ios->pctx->io_count);
+      // platform_default_log("uring_async_run: io_count++ → %lu\n",
+      //                      (unsigned long)ios->pctx->io_count);
       submit_status = 0;
    } else {
-      platform_default_log(
-         "uring_async_run: no SQE slot, treating as EAGAIN\n");
+      // platform_default_log(
+      //    "uring_async_run: no SQE slot, treating as EAGAIN\n");
       submit_status = -EAGAIN;
    }
 
@@ -889,19 +889,21 @@ uring_async_run(io_async_state *gios)
 
    while (1) {
       ios->__async_state_stack[0] = &&io_has_completed;
-      platform_default_log(
-         "uring_async_run: loop start(submit_status = % d)\n ", submit_status);
+      // platform_default_log(
+      //    "uring_async_run: loop start(submit_status = % d)\n ",
+      //    submit_status);
 
       if (queue != NULL) {
-         platform_default_log("uring_async_run: locking queue %p\n", queue);
+         // platform_default_log("uring_async_run: locking queue %p\n", queue);
          async_wait_queue_lock(queue);
       }
 
       if (submit_status != 1) {
          submit_status = io_uring_submit(&ios->pctx->uring_ctx.ring);
-         platform_default_log("submit ring=%p\n", &ios->pctx->uring_ctx.ring);
-         platform_default_log("uring_async_run: after submit → %d\n",
-                              submit_status);
+         // platform_default_log("submit ring=%p\n",
+         //                      &ios->pctx->uring_ctx.ring);
+         // platform_default_log("uring_async_run: after submit → %d\n",
+         //                      submit_status);
 
          // io_process_context *const pctx =
          //    ios->pctx; // ★ 로컬 고정(ios 재참조 금지)
@@ -921,44 +923,44 @@ uring_async_run(io_async_state *gios)
          // }
       }
       if (submit_status >= 0) {
-         platform_default_log(
-            "uring_async_run: submit OK, returning RUNNING\n");
+         // platform_default_log(
+         //    "uring_async_run: submit OK, returning RUNNING\n");
          if (queue != NULL) {
             async_wait_queue_unlock(queue);
-            platform_default_log("uring_async_run: unlocked queue\n");
+            // platform_default_log("uring_async_run: unlocked queue\n");
          }
          return ASYNC_STATUS_RUNNING;
 
       io_has_completed:
-         platform_default_log("uring_async_run: resumed at "
-                              "io_has_completed,calling user callback\n");
+         // platform_default_log("uring_async_run: resumed at "
+         //                      "io_has_completed,calling user callback\n");
 
          async_return(ios);
 
       } else if (submit_status < 0 && submit_status != -EAGAIN) {
-         platform_default_log("uring_async_run: fatal submit error %d\n",
-                              submit_status);
+         // platform_default_log("uring_async_run: fatal submit error %d\n",
+         //                      submit_status);
          if (queue != NULL) {
             async_wait_queue_unlock(queue);
-            platform_default_log("uring_async_run: unlocked queue on error\n");
+            // platform_default_log("uring_async_run: unlocked queue on error\n");
          }
          __sync_fetch_and_sub(&ios->pctx->io_count, 1);
          ios->status = submit_status;
-         platform_default_log("uring_async_run: io_count-- → %lu\n",
-                              (unsigned long)ios->pctx->io_count);
+         // platform_default_log("uring_async_run: io_count-- → %lu\n",
+         //                      (unsigned long)ios->pctx->io_count);
          async_return(ios);
 
       } else if (submit_status == -EAGAIN && queue != NULL) {
-         platform_default_log(
-            "uring_async_run: EAGAIN with lock, appending to queue\n");
+         // platform_default_log(
+         //    "uring_async_run: EAGAIN with lock, appending to queue\n");
          async_wait_queue_append(
             queue, &ios->waiter_node, ios->callback, ios->callback_arg);
-         platform_default_log("uring_async_run: yielding after append\n");
+         // platform_default_log("uring_async_run: yielding after append\n");
          async_yield_after(ios, async_wait_queue_unlock(queue));
 
       } else if (submit_status == -EAGAIN) {
-         platform_default_log(
-            "uring_async_run: EAGAIN first try, will lock & retry\n");
+         // platform_default_log(
+         //    "uring_async_run: EAGAIN first try, will lock & retry\n");
          queue = &ios->pctx->submit_waiters;
       }
    }
@@ -1291,7 +1293,7 @@ laio_wait_all(io_handle *ioh)
 static void
 uring_wait_all(io_handle *ioh)
 {
-   platform_default_log("uring_wait_all\n");
+   // platform_default_log("uring_wait_all\n");
    uring_handle  *io  = (uring_handle *)ioh;
    const pid_t    pid = platform_getpid();
    const threadid tid = platform_get_tid();
@@ -1334,11 +1336,11 @@ uring_register_thread(io_handle *ioh)
       (idx != INVALID_TID), "Failed to register IO for thread ID=%lu\n", tid);
    io->ctx_idx[tid] = idx;
 
-   platform_default_log("[REG] tid=%lu -> slot=%lu pctx=%p ring=%p\n",
-                        (unsigned long)tid,
-                        (unsigned long)idx,
-                        (void *)&io->ctx[idx],
-                        (void *)&io->ctx[idx].uring_ctx.ring);
+   // platform_default_log("[REG] tid=%lu -> slot=%lu pctx=%p ring=%p\n",
+   //                      (unsigned long)tid,
+   //                      (unsigned long)idx,
+   //                      (void *)&io->ctx[idx],
+   //                      (void *)&io->ctx[idx].uring_ctx.ring);
 }
 /*
 static void
@@ -1419,7 +1421,7 @@ uring_deregister_thread(io_handle *ioh)
    const pid_t    pid = platform_getpid();
    const threadid tid = platform_get_tid();
 
-   platform_default_log("uring_deregister\n");
+   // platform_default_log("uring_deregister\n");
 
    // 1) 현재 스레드의 pctx를 락 잡고 직접 찾기 (증가 없이!)
    lock_ctx(io);
@@ -1476,7 +1478,7 @@ uring_deregister_thread(io_handle *ioh)
    const pid_t    pid = platform_getpid();
    const threadid tid = platform_get_tid();
 
-   platform_default_log("uring_deregister\n");
+   // platform_default_log("uring_deregister\n");
 
    lock_ctx(io);
    int idx = -1;
