@@ -1581,7 +1581,8 @@ io_handle_init(uring_handle *io, io_config *cfg, platform_heap_id hid)
    io->heap_id   = hid;
 
    bool32 is_create  = ((cfg->flags & O_CREAT) != 0);
-   int    open_flags = cfg->flags | O_DIRECT;
+   //int    open_flags = cfg->flags | O_DIRECT;
+   int    open_flags = cfg->flags;
    if (is_create) {
       io->fd = open(cfg->filename, open_flags, cfg->perms);
    } else {
