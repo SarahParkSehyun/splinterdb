@@ -58,6 +58,12 @@ typedef struct uring_handle {
    uint64             ctx_idx[MAX_THREADS];
    platform_heap_id   heap_id;
    int                fd; // File descriptor to Splinter device/file.
+
+   // 모든 워커 스레드의 링이 ATTACH_WQ로 공유하는 SQPOLL 폴러 전용 링.
+   // 특정 워커 스레드에 종속시키지 않고 io_handle_init/deinit 수명에 묶어서,
+   // 어느 워커가 먼저 끝나도 나머지 워커들이 붙어 쓰는 폴러가 없어지지 않게 한다.
+   struct io_uring sqpoll_ring;
+   bool32           sqpoll_ring_ready;
 } uring_handle;
 
 platform_status

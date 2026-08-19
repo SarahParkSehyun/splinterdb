@@ -171,12 +171,19 @@ get_ctx_idx(uring_handle *io)
    // 2) 비어있는 슬롯을 찾아 새 링 생성
    for (int i = 0; i < MAX_THREADS; i++) {
       if (io->ctx[i].pid == 0) { // 빈 슬롯 판단 (초기값 0 보장)
-         // 가장 단순한 초기화: 플래그 없이 기본 링
-         int rc = io_uring_queue_init(
-            io->cfg->kernel_queue_size, &io->ctx[i].uring_ctx.ring, 0);
+         // io_handle_init()에서 만들어둔 공유 SQPOLL 폴러에 ATTACH_WQ로 붙는다.
+         // 이러면 워커 스레드 수만큼 폴링 커널 스레드가 늘어나지 않고 전체가
+         // 폴러 하나를 공유한다.
+         struct io_uring_params p;
+         memset(&p, 0, sizeof(p));
+         p.flags = IORING_SETUP_ATTACH_WQ;
+         p.wq_fd = io->sqpoll_ring.ring_fd;
+
+         int rc = io_uring_queue_init_params(
+            io->cfg->kernel_queue_size, &io->ctx[i].uring_ctx.ring, &p);
          if (rc < 0) {
             platform_error_log(
-               "io_uring_queue_init() failed (TID=%lu): %d (%s)\n",
+               "io_uring_queue_init_params(ATTACH_WQ) failed (TID=%lu): %d (%s)\n",
                (uint64)tid,
                rc,
                strerror(-rc));
@@ -633,6 +640,24 @@ io_handle_init(uring_handle *io, io_config *cfg, platform_heap_id hid)
       }
    }
 
+   // 워커 스레드들이 ATTACH_WQ로 공유할 SQPOLL 폴러를 여기서 한 번만 만든다.
+   // (워커 스레드 중 하나를 "리더"로 삼지 않는 이유: 그 스레드가 먼저 끝나서
+   //  ring을 close하면 나머지 스레드가 붙어있던 공유 폴러가 사라지기 때문)
+   struct io_uring_params sqpoll_params;
+   memset(&sqpoll_params, 0, sizeof(sqpoll_params));
+   sqpoll_params.flags          = IORING_SETUP_SQPOLL;
+   sqpoll_params.sq_thread_idle = 10; // ms
+
+   int sqpoll_rc = io_uring_queue_init_params(
+      io->cfg->kernel_queue_size, &io->sqpoll_ring, &sqpoll_params);
+   if (sqpoll_rc < 0) {
+      platform_error_log("io_uring_queue_init_params(SQPOLL) failed: %d (%s)\n",
+                         sqpoll_rc,
+                         strerror(-sqpoll_rc));
+      return STATUS_IO_ERROR;
+   }
+   io->sqpoll_ring_ready = TRUE;
+
    // leave req_hand set to 0
    return STATUS_OK;
 }
@@ -660,6 +685,11 @@ io_handle_deinit(uring_handle *io)
                          strerror(errno));
    }
    platform_assert(status == 0);
+
+   if (io->sqpoll_ring_ready) {
+      io_uring_queue_exit(&io->sqpoll_ring);
+      io->sqpoll_ring_ready = FALSE;
+   }
 }
 
 /*
