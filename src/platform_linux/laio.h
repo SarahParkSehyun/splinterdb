@@ -37,10 +37,9 @@ typedef struct io_process_context {
    uint64             thread_count;
    bool32             shutting_down;
    uint64             io_count; // inflight ios
-   threadid           cleaner_tid;
+   uint32             pending_submissions; // 아직 io_uring_submit()에 안 넘긴 SQE 수
    uint32             slot_idx;
    io_context_t       ctx;
-   pthread_t          io_cleaner;
    async_wait_queue   submit_waiters;
    io_uring_context_t uring_ctx;
    uring_handle      *parent;
