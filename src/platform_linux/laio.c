@@ -24,6 +24,9 @@
 #include <sys/prctl.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/epoll.h>
+#include <sys/eventfd.h>
+#include <sched.h>
 #include <fcntl.h>
 #include <errno.h>
 #if defined(__has_feature)
@@ -88,8 +91,10 @@ uring_cleanup_one(io_process_context *pctx, int mincnt)
       if (ret < 0 || cqe == NULL)
          return 0;
    } else {
+      // io_uring_peek_cqe()는 성공 시 0을 반환한다(실패는 음수) — wait_cqe와
+      // 동일한 규약이라, "찾음" 여부는 ret이 아니라 cqe != NULL로 판단해야 한다.
       ret = io_uring_peek_cqe(&pctx->uring_ctx.ring, &cqe);
-      if (ret <= 0 || cqe == NULL)
+      if (ret < 0 || cqe == NULL)
          return 0;
    }
 
@@ -105,44 +110,62 @@ uring_cleanup_one(io_process_context *pctx, int mincnt)
    uring_async_state *ios = io_uring_cqe_get_data(cqe);
 
    ios->status = cqe->res;
-   if (ios->callback)
+   if (ios->callback) {
+      // 콜백이 이 리퍼 스레드에서 실행되는데, 콜백 내부에서 추가 I/O를
+      // 제출할 수 있다(예: 쓰기 완료 후 후속 쓰기 트리거). platform_get_tid()는
+      // 스레드로컬 변수를 읽는 것뿐이고 리퍼 스레드는 등록된 적이 없어서
+      // 기본값(INVALID_TID)으로 읽힌다. 콜백을 부르는 동안만, 이 링을 원래
+      // 등록했던 워커의 tid를 잠깐 빌려 써서 uring_get_thread_context()가
+      // 이 pctx를 정확히 찾게 해준다.
+      threadid saved_tid = platform_get_tid();
+      platform_set_tid(pctx->tid);
       ios->callback(ios->callback_arg);
+      platform_set_tid(saved_tid);
+   }
 
    io_uring_cqe_seen(&pctx->uring_ctx.ring, cqe);
 
+   __sync_fetch_and_add(&pctx->completions_done, 1);
    async_wait_queue_release_one(&pctx->submit_waiters);
 
    return 1;
 }
 
+// 리퍼 스레드 풀: 워커 스레드마다 전담 클리너를 두지 않고, 고정 개수(4개)의
+// 스레드가 epoll로 여러 워커 링의 eventfd를 동시에 감시하다가, 완료가 쌓인
+// 링만 논블로킹으로 드레인한다. 각 링의 CQ(완료 큐)는 이 리퍼 스레드만
+// 읽는다는 게 불변조건이다 (워커 스레드는 자기 링의 CQ를 직접 건드리지 않음).
 static void *
-uring_cleaner(void *arg)
+uring_reaper_loop(void *arg)
 {
-   io_process_context *pctx = (io_process_context *)arg;
-   prctl(PR_SET_NAME, "uring_cleaner", 0, 0, 0);
+   uring_reaper *reaper = (uring_reaper *)arg;
+   prctl(PR_SET_NAME, "uring_reaper", 0, 0, 0);
 
-   // 클리너 TID 매핑(지금 코드 유지)
-   if (pctx->parent) {
-      uring_handle *io = (uring_handle *)pctx->parent;
-      threadid ctid = platform_get_tid();
-      lock_ctx(io);
-      io->ctx_idx[ctid] = pctx->slot_idx;
-      pctx->cleaner_tid = ctid;
-      unlock_ctx(io);
-   }
-
-   // 메인 루프: 1건은 반드시 처리(블로킹), 이어서 버스트 드레인(논블로킹)
-   while (!(pctx->shutting_down && __sync_fetch_and_add(&pctx->io_count, 0) == 0)) {
-      if (!uring_cleanup_one(pctx, /*mincnt=*/1)) {
-         continue; // 대기 타임아웃/깨끗한 경우
+   struct epoll_event events[64];
+   for (;;) {
+      int n = epoll_wait(reaper->epoll_fd, events, 64, -1);
+      if (n < 0) {
+         if (errno == EINTR) {
+            continue;
+         }
+         platform_error_log("epoll_wait(reaper) failed: %s\n", strerror(errno));
+         break;
       }
-      for (int i = 0; i < 63; i++) {
-         if (!uring_cleanup_one(pctx, /*mincnt=*/0)) break;
+
+      for (int i = 0; i < n; i++) {
+         if (events[i].data.ptr == NULL) {
+            // wake_fd: 종료 신호
+            return NULL;
+         }
+
+         io_process_context *pctx = (io_process_context *)events[i].data.ptr;
+         uint64               val;
+         ssize_t              r = read(pctx->event_fd, &val, sizeof(val));
+         (void)r; // eventfd 카운터 소비(값 자체는 안 씀)
+
+         while (uring_cleanup_one(pctx, /*mincnt=*/0)) { }
       }
    }
-
-   // 종료 드레인
-   while (uring_cleanup_one(pctx, 0)) { }
    return NULL;
 }
 
@@ -193,10 +216,10 @@ get_ctx_idx(uring_handle *io)
 
          io->ctx[i].pid               = pid;
          io->ctx[i].tid               = tid; // 오너 워커 TID
-         io->ctx[i].cleaner_tid       = 0;   // 초기화
          io->ctx[i].slot_idx          = i;   // ★
          io->ctx[i].thread_count      = 1;
          io->ctx[i].io_count          = 0;
+         io->ctx[i].completions_done  = 0;
          io->ctx[i].shutting_down     = 0;
          io->ctx[i].uring_ctx.heap_id = io->heap_id;
          io->ctx[i].parent            = io; // ★
@@ -205,14 +228,43 @@ get_ctx_idx(uring_handle *io)
 
          async_wait_queue_init(&io->ctx[i].submit_waiters);
 
-         // per-ring 클리너 생성 (pctx만 넘김)
-         int rc_thr = pthread_create(
-            &io->ctx[i].io_cleaner, NULL, uring_cleaner, &io->ctx[i]);
-         if (rc_thr != 0) {
-            platform_error_log("pthread_create(uring_cleaner) failed: %d %s\n",
-                               rc_thr,
-                               strerror(rc_thr));
-            // 링 해제 및 롤백
+         // 이 링 전용 eventfd를 만들어 등록하고, 공유 리퍼 풀 중 하나의
+         // epoll 세트에 추가한다 (워커별 전담 스레드를 만들지 않는다).
+         int efd = eventfd(0, EFD_NONBLOCK);
+         if (efd < 0) {
+            platform_error_log(
+               "eventfd() failed (TID=%lu): %s\n", (uint64)tid, strerror(errno));
+            io_uring_queue_exit(&io->ctx[i].uring_ctx.ring);
+            memset(&io->ctx[i], 0, sizeof(io->ctx[i]));
+            unlock_ctx(io);
+            return INVALID_TID;
+         }
+
+         int reg_rc = io_uring_register_eventfd(&io->ctx[i].uring_ctx.ring, efd);
+         if (reg_rc < 0) {
+            platform_error_log(
+               "io_uring_register_eventfd() failed (TID=%lu): %d (%s)\n",
+               (uint64)tid,
+               reg_rc,
+               strerror(-reg_rc));
+            close(efd);
+            io_uring_queue_exit(&io->ctx[i].uring_ctx.ring);
+            memset(&io->ctx[i], 0, sizeof(io->ctx[i]));
+            unlock_ctx(io);
+            return INVALID_TID;
+         }
+         io->ctx[i].event_fd = efd;
+
+         uring_reaper       *reaper = &io->reapers[i % URING_REAPER_POOL_SIZE];
+         struct epoll_event  ev;
+         memset(&ev, 0, sizeof(ev));
+         ev.events   = EPOLLIN;
+         ev.data.ptr = &io->ctx[i];
+         if (epoll_ctl(reaper->epoll_fd, EPOLL_CTL_ADD, efd, &ev) < 0) {
+            platform_error_log("epoll_ctl(ADD) failed (TID=%lu): %s\n",
+                               (uint64)tid,
+                               strerror(errno));
+            close(efd);
             io_uring_queue_exit(&io->ctx[i].uring_ctx.ring);
             memset(&io->ctx[i], 0, sizeof(io->ctx[i]));
             unlock_ctx(io);
@@ -272,15 +324,15 @@ uring_get_thread_context(io_handle *ioh)
    // Fast path: 캐시된 매핑
    if (idx < MAX_THREADS) {
       io_process_context *p = &io->ctx[idx];
-      if (p->pid == pid && (p->tid == tid || p->cleaner_tid == tid)) {
+      if (p->pid == pid && p->tid == tid) {
          return p;
       }
    }
 
-   // Slow path: 선형 검색 (클리너/워커 모두 커버)
+   // Slow path: 선형 검색
    for (int i = 0; i < MAX_THREADS; i++) {
       io_process_context *p = &io->ctx[i];
-      if (p->pid == pid && (p->tid == tid || p->cleaner_tid == tid)) {
+      if (p->pid == pid && p->tid == tid) {
          if (tid < MAX_THREADS) {
             io->ctx_idx[tid] = i; // 캐시 갱신 (가능할 때만)
          }
@@ -482,10 +534,20 @@ uring_cleanup(io_handle *ioh, uint64 count)
       io->ctx_idx[tid] < MAX_THREADS, "Invalid ctx_idx=%lu", io->ctx_idx[tid]);
    io_process_context *pctx = &io->ctx[io->ctx_idx[tid]];
 
-   // 최대 'count' 개 이벤트를 처리하거나, count==0일 때 모든 inflight I/O 처리
-   int i = 0;
-   while ((count == 0 || i < count) && pctx->io_count > 0) {
-      i += uring_cleanup_one(pctx, 0);
+   // CQ(완료 큐)는 리퍼 스레드만 읽는다는 불변조건을 지키기 위해, 워커
+   // 스레드는 여기서 직접 드레인하지 않고 리퍼가 처리해줄 때까지 기다린다.
+   if (count == 0) {
+      while (__sync_fetch_and_add(&pctx->io_count, 0) > 0) {
+         sched_yield();
+      }
+      return;
+   }
+
+   uint64 target = __sync_fetch_and_add(&pctx->completions_done, 0) + count;
+   while (__sync_fetch_and_add(&pctx->completions_done, 0) < target
+          && __sync_fetch_and_add(&pctx->io_count, 0) > 0)
+   {
+      sched_yield();
    }
 }
 
@@ -547,33 +609,22 @@ uring_deregister_thread(io_handle *ioh)
    pctx->shutting_down = TRUE;
    unlock_ctx(io);
 
-   // 2) ★ 깨우기용 NOP 제출 (user_data == NULL)
-   {
-      struct io_uring_sqe *sqe = io_uring_get_sqe(&pctx->uring_ctx.ring);
-      if (sqe) {
-         io_uring_prep_nop(sqe);
-         io_uring_sqe_set_data(sqe, NULL); // NOP 표시
-         (void)io_uring_submit(&pctx->uring_ctx.ring);
-      }
+   // 2) 남은 inflight I/O를 리퍼가 다 처리할 때까지 대기 (CQ는 리퍼 전용)
+   while (__sync_fetch_and_add(&pctx->io_count, 0) > 0) {
+      sched_yield();
    }
 
-   // 3) 클리너 종료 대기
-   pthread_join(pctx->io_cleaner, NULL);
+   // 3) 리퍼의 epoll 세트에서 이 링의 eventfd를 빼고 정리
+   uring_reaper *reaper = &io->reapers[idx % URING_REAPER_POOL_SIZE];
+   epoll_ctl(reaper->epoll_fd, EPOLL_CTL_DEL, pctx->event_fd, NULL);
+   close(pctx->event_fd);
 
-   // 4) (보호용) 혹시 남았다면 드레인
-   while (pctx->io_count > 0) {
-      uring_cleanup(ioh, 1);
-   }
-
-   // 5) 링 종료 및 슬롯 반환
+   // 4) 링 종료 및 슬롯 반환
    io_uring_queue_exit(&pctx->uring_ctx.ring);
 
    lock_ctx(io);
    if (tid < MAX_THREADS)
       io->ctx_idx[tid] = INVALID_TID;
-   if (pctx->cleaner_tid && pctx->cleaner_tid < MAX_THREADS) {
-      io->ctx_idx[pctx->cleaner_tid] = INVALID_TID;
-   }
    async_wait_queue_deinit(&pctx->submit_waiters);
    memset(pctx, 0, sizeof(*pctx));
    unlock_ctx(io);
@@ -658,6 +709,46 @@ io_handle_init(uring_handle *io, io_config *cfg, platform_heap_id hid)
    }
    io->sqpoll_ring_ready = TRUE;
 
+   // 고정 개수의 리퍼 스레드 풀을 시작한다. 이후 워커 스레드들이 get_ctx_idx()
+   // 에서 만드는 각자의 링은 이 풀 중 하나에 라운드로빈으로 배정된다.
+   for (int i = 0; i < URING_REAPER_POOL_SIZE; i++) {
+      io->reapers[i].epoll_fd = epoll_create1(0);
+      if (io->reapers[i].epoll_fd < 0) {
+         platform_error_log("epoll_create1() failed: %s\n", strerror(errno));
+         return STATUS_IO_ERROR;
+      }
+      io->reapers[i].wake_fd = eventfd(0, EFD_NONBLOCK);
+      if (io->reapers[i].wake_fd < 0) {
+         platform_error_log("eventfd(wake) failed: %s\n", strerror(errno));
+         return STATUS_IO_ERROR;
+      }
+
+      struct epoll_event ev;
+      memset(&ev, 0, sizeof(ev));
+      ev.events   = EPOLLIN;
+      ev.data.ptr = NULL; // NULL == 종료 신호로 구분
+      if (epoll_ctl(io->reapers[i].epoll_fd,
+                    EPOLL_CTL_ADD,
+                    io->reapers[i].wake_fd,
+                    &ev)
+          < 0)
+      {
+         platform_error_log("epoll_ctl(wake_fd) failed: %s\n", strerror(errno));
+         return STATUS_IO_ERROR;
+      }
+
+      io->reapers[i].parent = io;
+
+      int rc_thr = pthread_create(
+         &io->reapers[i].thread, NULL, uring_reaper_loop, &io->reapers[i]);
+      if (rc_thr != 0) {
+         platform_error_log(
+            "pthread_create(reaper) failed: %d %s\n", rc_thr, strerror(rc_thr));
+         return STATUS_IO_ERROR;
+      }
+   }
+   io->reapers_ready = TRUE;
+
    // leave req_hand set to 0
    return STATUS_OK;
 }
@@ -685,6 +776,22 @@ io_handle_deinit(uring_handle *io)
                          strerror(errno));
    }
    platform_assert(status == 0);
+
+   // 이 시점엔 모든 워커 링이 이미 정리됐어야 하므로(위 루프에서 확인),
+   // 리퍼 스레드들에게 종료 신호를 보내고 다 끝날 때까지 기다린다.
+   if (io->reapers_ready) {
+      for (int i = 0; i < URING_REAPER_POOL_SIZE; i++) {
+         uint64  one = 1;
+         ssize_t w   = write(io->reapers[i].wake_fd, &one, sizeof(one));
+         (void)w;
+      }
+      for (int i = 0; i < URING_REAPER_POOL_SIZE; i++) {
+         pthread_join(io->reapers[i].thread, NULL);
+         close(io->reapers[i].epoll_fd);
+         close(io->reapers[i].wake_fd);
+      }
+      io->reapers_ready = FALSE;
+   }
 
    if (io->sqpoll_ring_ready) {
       io_uring_queue_exit(&io->sqpoll_ring);

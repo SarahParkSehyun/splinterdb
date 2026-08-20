@@ -36,16 +36,26 @@ typedef struct io_process_context {
    threadid           tid;
    uint64             thread_count;
    bool32             shutting_down;
-   uint64             io_count; // inflight ios
-   threadid           cleaner_tid;
+   uint64             io_count;         // inflight ios
+   uint64             completions_done; // 리퍼가 처리한 누적 완료 수
+   int                event_fd;         // 이 링 전용 eventfd (리퍼가 epoll로 감시)
    uint32             slot_idx;
    io_context_t       ctx;
-   pthread_t          io_cleaner;
    async_wait_queue   submit_waiters;
    io_uring_context_t uring_ctx;
    uring_handle      *parent;
 } io_process_context;
 
+#define URING_REAPER_POOL_SIZE 4
+
+// 워커 링 여러 개의 eventfd를 epoll로 같이 감시하는 공유 완료-처리 스레드.
+// 워커 스레드마다 전담 클리너를 두는 대신, 고정된 개수(4개)가 전체를 담당한다.
+typedef struct uring_reaper {
+   int                   epoll_fd;
+   int                   wake_fd; // 종료 신호용 eventfd
+   pthread_t             thread;
+   struct uring_handle  *parent;
+} uring_reaper;
 
 /*
  * Async IO context structure handle:
@@ -64,6 +74,9 @@ typedef struct uring_handle {
    // 어느 워커가 먼저 끝나도 나머지 워커들이 붙어 쓰는 폴러가 없어지지 않게 한다.
    struct io_uring sqpoll_ring;
    bool32           sqpoll_ring_ready;
+
+   uring_reaper reapers[URING_REAPER_POOL_SIZE];
+   bool32       reapers_ready;
 } uring_handle;
 
 platform_status
